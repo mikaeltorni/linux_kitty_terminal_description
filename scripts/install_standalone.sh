@@ -135,19 +135,38 @@ report_codex_detection() {
   fi
 }
 
-main() {
-  msg "Installing Linux Kitty Terminal Description for $TARGET_USER"
-
+# install_cli - install the kitty-terminal-description CLI into the target
+# user's ~/.local/bin.
+install_cli() {
   local bin_dir="$TARGET_HOME/.local/bin"
   run_as_target mkdir -p "$bin_dir"
   run_as_target install -D -m 0755 "$SCRIPT_DIR/scripts/kitty_terminal_description.py" "$bin_dir/kitty-terminal-description"
+}
 
-  install_env_file
-  configure_kitty_remote_control
-  configure_claude_hook
-  report_codex_detection
+# Component selection runtime and this repository's component manifest.
+# Load the shared installer component framework. Its single source of truth is
+# the linux_installation_scripts_functions repository (cloned as a sibling by
+# installation_scripts, or downloaded on demand) -- no per-repo vendored copy.
+for __isc_d in "${ISC_FUNCTIONS_DIR:-}" \
+               "$SCRIPT_DIR/../linux_installation_scripts_functions" \
+               "$HOME/projects/linux_installation_scripts_functions"; do
+  [ -n "$__isc_d" ] && [ -f "$__isc_d/component_loader.sh" ] && { source "$__isc_d/component_loader.sh"; break; }
+done
+declare -F isc_activate_components >/dev/null 2>&1 || \
+  source <(curl -fsSL "https://raw.githubusercontent.com/mikaeltorni/linux_installation_scripts_functions/${ISC_FUNCTIONS_REF:-master}/component_loader.sh")
+isc_activate_components
+source "$SCRIPT_DIR/installer/components.sh"
 
+main() {
+  msg "Installing Linux Kitty Terminal Description for $TARGET_USER"
+  component_main "$@"
   msg "Linux Kitty Terminal Description installed. Ensure ~/.local/bin is on PATH."
 }
+
+# Listing/help must print only their own output (the master installer parses
+# --list-components); bypass the surrounding messages for those.
+case "${1:-}" in
+  --list-components|--help|-h) component_main "$@"; exit $? ;;
+esac
 
 main "$@"
