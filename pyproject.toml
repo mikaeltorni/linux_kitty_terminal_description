@@ -1,0 +1,30 @@
+[project]
+name = "linux-kitty-terminal-description"
+version = "0.1.0"
+description = "Kitty terminal title generation for Codex and Claude prompts."
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+test = [
+    "pytest>=9.0.3",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+only-include = ["scripts"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.uv]
+# Supply-chain protection: ignore package releases published in the last 24 hours.
+exclude-newer = "24 hours"
+
+[tool.uv.pip]
+# Enforce hash verification for all `uv pip` subcommands.
+require-hashes = true
+verify-hashes = true
