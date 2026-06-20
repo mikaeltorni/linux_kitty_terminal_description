@@ -82,48 +82,7 @@ configure_claude_hook() {
   fi
 
   run_as_target mkdir -p "$claude_dir"
-  run_as_target env \
-    CLAUDE_SETTINGS_FILE="$settings_file" \
-    KITTY_DESCRIPTION_HOOK_COMMAND="$hook_command" \
-    python3 - <<'PY'
-import json
-import os
-from pathlib import Path
-
-settings_file = Path(os.environ["CLAUDE_SETTINGS_FILE"])
-hook_command = os.environ["KITTY_DESCRIPTION_HOOK_COMMAND"]
-
-try:
-    settings = json.loads(settings_file.read_text(encoding="utf-8"))
-    if not isinstance(settings, dict):
-        settings = {}
-except Exception:
-    settings = {}
-
-hooks = settings.setdefault("hooks", {})
-entries = hooks.setdefault("UserPromptSubmit", [])
-if not isinstance(entries, list):
-    entries = []
-    hooks["UserPromptSubmit"] = entries
-
-for entry in entries:
-    for hook in entry.get("hooks", []):
-        if hook.get("command") == hook_command:
-            break
-    else:
-        continue
-    break
-else:
-    for entry in entries:
-        if entry.get("matcher", "") == "":
-            entry.setdefault("hooks", []).append({"type": "command", "command": hook_command})
-            break
-    else:
-        entries.append({"matcher": "", "hooks": [{"type": "command", "command": hook_command}]})
-
-settings_file.parent.mkdir(parents=True, exist_ok=True)
-settings_file.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
-PY
+  run_as_target python3 "$SCRIPT_DIR/scripts/claude_hook_config.py" "$settings_file" "$hook_command"
   msg "Configured Claude UserPromptSubmit hook"
 }
 

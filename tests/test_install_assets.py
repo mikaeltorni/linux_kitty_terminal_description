@@ -22,6 +22,8 @@ def test_installer_configures_claude_but_not_kilo():
 
     assert "UserPromptSubmit" in source
     assert "kitty-terminal-description claude-hook" in source
+    assert "claude_hook_config.py" in source
+    assert "python3 - <<'PY'" not in source
     assert "kilo" not in source.lower()
 
 

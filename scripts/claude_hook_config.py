@@ -1,0 +1,79 @@
+"""claude_hook_config.py - install-time Claude Code hook settings helper.
+
+Components:
+  - configure_user_prompt_submit_hook: Add the Kitty title hook idempotently.
+  - main: CLI entrypoint used by install_standalone.sh.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import sys
+from pathlib import Path
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+def _read_settings(settings_file: Path) -> dict[str, Any]:
+    """Read Claude settings JSON, returning an empty object when unavailable."""
+    try:
+        settings = json.loads(settings_file.read_text(encoding="utf-8"))
+        if isinstance(settings, dict):
+            return settings
+        logger.warning("Ignoring non-object Claude settings file: %s", settings_file)
+    except Exception as exc:
+        logger.warning("Could not read Claude settings from %s: %s", settings_file, exc)
+    return {}
+
+
+def _entry_has_command(entry: Any, command: str) -> bool:
+    """Return whether one Claude hook matcher entry already runs command."""
+    if not isinstance(entry, dict):
+        return False
+    hooks = entry.get("hooks", [])
+    if not isinstance(hooks, list):
+        return False
+    return any(isinstance(hook, dict) and hook.get("command") == command for hook in hooks)
+
+
+def configure_user_prompt_submit_hook(settings_file: Path, hook_command: str) -> None:
+    """Ensure the Claude UserPromptSubmit hook contains ``hook_command`` once."""
+    settings = _read_settings(settings_file)
+    hooks = settings.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        hooks = {}
+        settings["hooks"] = hooks
+
+    entries = hooks.setdefault("UserPromptSubmit", [])
+    if not isinstance(entries, list):
+        entries = []
+        hooks["UserPromptSubmit"] = entries
+
+    if not any(_entry_has_command(entry, hook_command) for entry in entries):
+        for entry in entries:
+            if isinstance(entry, dict) and entry.get("matcher", "") == "":
+                entry.setdefault("hooks", []).append({"type": "command", "command": hook_command})
+                break
+        else:
+            entries.append({"matcher": "", "hooks": [{"type": "command", "command": hook_command}]})
+
+    settings_file.parent.mkdir(parents=True, exist_ok=True)
+    settings_file.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+    logger.info("Configured Claude UserPromptSubmit hook in %s", settings_file)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI entrypoint used by the shell installer."""
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    args = list(sys.argv[1:] if argv is None else argv)
+    if len(args) != 2:
+        print("Usage: claude_hook_config.py <settings.json> <hook-command>", file=sys.stderr)
+        return 2
+    configure_user_prompt_submit_hook(Path(args[0]), args[1])
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
