@@ -23,6 +23,25 @@ def load_module():
     return module
 
 
+def test_configure_logging_writes_to_repo_local_log(monkeypatch, tmp_path):
+    """configure_logging should emit timestamped lines under the .log dir."""
+    mod = load_module()
+    log_dir = tmp_path / ".log"
+    monkeypatch.setattr(mod, "LOG_DIR", log_dir)
+    monkeypatch.setattr(mod, "LOG_FILE", log_dir / "events.log")
+    mod.logger.handlers.clear()
+
+    logger = mod.configure_logging()
+    logger.info("unit test log line")
+    for handler in logger.handlers:
+        handler.flush()
+
+    contents = (log_dir / "events.log").read_text(encoding="utf-8")
+    assert "unit test log line" in contents
+    assert "INFO" in contents
+    mod.logger.handlers.clear()
+
+
 def test_clean_label_strips_quotes_reasoning_and_caps_words():
     """Model output cleanup should keep titles terse and safe."""
     mod = load_module()

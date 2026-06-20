@@ -2,6 +2,7 @@
 """kitty_terminal_description.py — Prompt summaries for Kitty terminal titles.
 
 Components:
+  - Centralized logging to .log/events.log via configure_logging().
   - OpenRouter summary helpers for short prompt labels.
   - Project/Git context helpers for readable terminal titles.
   - Feature-label cache shared by title and completion-message callers.
@@ -18,6 +19,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -64,39 +66,97 @@ LOG_FILE = LOG_DIR / "events.log"
 
 
 class SummaryResult(NamedTuple):
-    """Outcome of a prompt-summary attempt."""
+    """Outcome of a prompt-summary attempt.
+
+    Attributes:
+        status (str): One of the ``STATUS_*`` constants describing the outcome.
+        label (str): The resulting feature label (empty unless ``status`` is
+            :data:`STATUS_OK`).
+        detail (str): Human-readable context, such as an error message or the
+            ``"cache"`` source marker.
+    """
 
     status: str
     label: str = ""
     detail: str = ""
 
 
-def append_log(message: str) -> None:
-    """Append a best-effort repository-local log line."""
+logger = logging.getLogger("kitty_terminal_description")
+
+
+def configure_logging() -> logging.Logger:
+    """Attach a repository-local file handler to the module logger once.
+
+    The handler writes timestamped, level-tagged, searchable lines to
+    ``.log/events.log`` under the repository root (or the directory named by
+    ``KITTY_TERMINAL_DESCRIPTION_LOG_DIR``). Creating the directory or file is
+    best-effort: when it fails (read-only deploy target, missing parents) a
+    ``NullHandler`` is attached instead so logging calls stay harmless.
+
+    Returns:
+        logging.Logger: The configured module logger (idempotent on re-call).
+    """
+    if logger.handlers:
+        return logger
+    handler: logging.Handler
     try:
         LOG_DIR.mkdir(parents=True, exist_ok=True)
-        LOG_FILE.open("a", encoding="utf-8").write(f"{time.strftime('%Y-%m-%dT%H:%M:%S')} {message}\n")
+        handler = logging.FileHandler(LOG_FILE, encoding="utf-8")
+        handler.setFormatter(
+            logging.Formatter(
+                "%(asctime)s %(levelname)s %(name)s: %(message)s",
+                "%Y-%m-%dT%H:%M:%S",
+            )
+        )
     except OSError:
-        pass
+        handler = logging.NullHandler()
+    logger.addHandler(handler)
+    logger.setLevel(logging.DEBUG)
+    logger.propagate = False
+    return logger
 
 
 def summary_model() -> str:
-    """Return the configured OpenRouter summary model id."""
-    return (os.environ.get("OPENROUTER_SUMMARY_MODEL") or "").strip() or DEFAULT_SUMMARY_MODEL
+    """Resolve the OpenRouter summary model id.
+
+    Returns:
+        str: ``OPENROUTER_SUMMARY_MODEL`` when set and non-empty, otherwise
+        :data:`DEFAULT_SUMMARY_MODEL`.
+    """
+    model = (os.environ.get("OPENROUTER_SUMMARY_MODEL") or "").strip() or DEFAULT_SUMMARY_MODEL
+    logger.debug("summary_model resolved=%s", model)
+    return model
 
 
 def request_timeout() -> float:
-    """Return the OpenRouter request timeout in seconds."""
+    """Resolve the OpenRouter request timeout in seconds.
+
+    Reads ``OPENROUTER_SUMMARY_TIMEOUT`` and falls back to ``8.0`` for unset,
+    non-numeric, or non-positive values.
+
+    Returns:
+        float: A positive timeout in seconds.
+    """
     raw = (os.environ.get("OPENROUTER_SUMMARY_TIMEOUT") or "").strip()
     try:
         value = float(raw)
     except ValueError:
+        logger.debug("request_timeout invalid=%r using default=8.0", raw)
         return 8.0
-    return value if value > 0 else 8.0
+    timeout = value if value > 0 else 8.0
+    logger.debug("request_timeout resolved=%s", timeout)
+    return timeout
 
 
 def env_file_candidates() -> list[Path]:
-    """Return candidate env files, most specific first."""
+    """Build the ordered list of env-file paths to probe, most specific first.
+
+    Order: ``OPENROUTER_ENV_FILE`` override, the XDG config file, the
+    repository-root ``.env``, and the ``.env`` beside the installed script.
+
+    Returns:
+        list[Path]: Candidate env-file paths in priority order.
+    """
     candidates: list[Path] = []
     override = (os.environ.get("OPENROUTER_ENV_FILE") or "").strip()
     if override:
@@ -106,17 +166,31 @@ def env_file_candidates() -> list[Path]:
     here = Path(__file__).resolve()
     candidates.append(here.parent.parent / ".env")
     candidates.append(here.parent / ".env")
+    logger.debug("env_file_candidates count=%d", len(candidates))
     return candidates
 
 
 def load_dotenv(path: Path | None = None) -> None:
-    """Load KEY=VALUE pairs from the first existing env file."""
+    """Load ``KEY=VALUE`` pairs from the first readable env file into the env.
+
+    Existing ``os.environ`` keys are never overwritten, so real environment
+    variables always win over file contents. ``export`` prefixes and wrapping
+    quotes are stripped. Processing stops after the first readable file.
+
+    Args:
+        path (Path | None): Explicit env file to load. When ``None`` the
+            ordered :func:`env_file_candidates` list is probed instead.
+
+    Returns:
+        None
+    """
     paths = [path] if path is not None else env_file_candidates()
     for env_path in paths:
         try:
             text = env_path.read_text(encoding="utf-8")
         except (OSError, ValueError):
             continue
+        logger.debug("load_dotenv loading file=%s", env_path)
         for raw_line in text.splitlines():
             line = raw_line.strip()
             if not line or line.startswith("#") or "=" not in line:
@@ -131,27 +205,50 @@ def load_dotenv(path: Path | None = None) -> None:
 
 
 def api_key() -> str:
-    """Return the OpenRouter API key, loading env files if needed."""
+    """Resolve the OpenRouter API key, loading env files on demand.
+
+    Prefers an already-exported ``OPENROUTER_API_KEY``; otherwise loads the
+    first available env file (see :func:`load_dotenv`) and re-reads it.
+
+    Returns:
+        str: The trimmed API key, or an empty string when none is configured.
+    """
     key = (os.environ.get("OPENROUTER_API_KEY") or "").strip()
     if key:
         return key
     load_dotenv()
-    return (os.environ.get("OPENROUTER_API_KEY") or "").strip()
+    key = (os.environ.get("OPENROUTER_API_KEY") or "").strip()
+    logger.debug("api_key resolved present=%s", bool(key))
+    return key
 
 
 def summary_cache_ttl() -> float:
-    """Return the prompt-summary cache TTL in seconds."""
+    """Resolve the prompt-summary cache time-to-live in seconds.
+
+    Reads ``OPENROUTER_SUMMARY_CACHE_TTL`` and falls back to
+    :data:`DEFAULT_SUMMARY_CACHE_TTL_SECONDS` for unset or non-numeric values.
+    A value ``<= 0`` disables caching at the call sites.
+
+    Returns:
+        float: The cache TTL in seconds.
+    """
     raw = (os.environ.get("OPENROUTER_SUMMARY_CACHE_TTL") or "").strip()
     if not raw:
         return float(DEFAULT_SUMMARY_CACHE_TTL_SECONDS)
     try:
         return float(raw)
     except ValueError:
+        logger.debug("summary_cache_ttl invalid=%r using default", raw)
         return float(DEFAULT_SUMMARY_CACHE_TTL_SECONDS)
 
 
 def summary_cache_dir() -> Path:
-    """Return the OpenRouter label cache directory."""
+    """Resolve the directory holding cached OpenRouter labels.
+
+    Returns:
+        Path: ``OPENROUTER_SUMMARY_CACHE_DIR`` when set, else the
+        ``summary-cache`` subdirectory of :data:`STATE_DIR`.
+    """
     override = (os.environ.get("OPENROUTER_SUMMARY_CACHE_DIR") or "").strip()
     if override:
         return Path(override).expanduser()
@@ -159,26 +256,60 @@ def summary_cache_dir() -> Path:
 
 
 def _summary_cache_path(model: str, prompt: str) -> Path:
+    """Compute the cache file path for a model/prompt pair.
+
+    Args:
+        model (str): Resolved OpenRouter model id.
+        prompt (str): Whitespace-normalized prompt text.
+
+    Returns:
+        Path: A ``<sha256>.txt`` path inside :func:`summary_cache_dir`.
+    """
     digest = hashlib.sha256(f"{model}\n{prompt}".encode("utf-8")).hexdigest()
     return summary_cache_dir() / f"{digest}.txt"
 
 
 def read_cached_label(model: str, prompt: str) -> str | None:
-    """Return a fresh cached label, or None."""
+    """Return a still-fresh cached label for a model/prompt pair.
+
+    Args:
+        model (str): Resolved OpenRouter model id.
+        prompt (str): Whitespace-normalized prompt text.
+
+    Returns:
+        str | None: The cached label when present and within the TTL window,
+        otherwise ``None`` (also on disabled caching or read errors).
+    """
     ttl = summary_cache_ttl()
     if ttl <= 0:
         return None
     try:
         path = _summary_cache_path(model, prompt)
         if not path.is_file() or (time.time() - path.stat().st_mtime) > ttl:
+            logger.debug("read_cached_label miss model=%s", model)
             return None
-        return path.read_text(encoding="utf-8").strip() or None
-    except OSError:
+        label = path.read_text(encoding="utf-8").strip() or None
+        logger.debug("read_cached_label hit=%s model=%s", bool(label), model)
+        return label
+    except OSError as exc:
+        logger.warning("read_cached_label failed model=%s error=%s", model, exc)
         return None
 
 
 def write_cached_label(model: str, prompt: str, label: str) -> None:
-    """Persist a prompt label for paired title/completion calls."""
+    """Persist a prompt label so paired title/completion calls reuse it.
+
+    Writes atomically via a temporary file. No-ops when the label is empty or
+    caching is disabled, and swallows filesystem errors.
+
+    Args:
+        model (str): Resolved OpenRouter model id.
+        prompt (str): Whitespace-normalized prompt text.
+        label (str): Feature label to cache.
+
+    Returns:
+        None
+    """
     if not label or summary_cache_ttl() <= 0:
         return
     try:
@@ -187,12 +318,28 @@ def write_cached_label(model: str, prompt: str, label: str) -> None:
         tmp = path.with_suffix(".tmp")
         tmp.write_text(label, encoding="utf-8")
         tmp.replace(path)
-    except OSError:
-        pass
+        logger.debug("write_cached_label stored model=%s", model)
+    except OSError as exc:
+        logger.warning("write_cached_label failed model=%s error=%s", model, exc)
 
 
 def clean_label(text: str, *, max_words: int = 8, max_chars: int = 64) -> str:
-    """Normalize a model response into a safe, terse feature label."""
+    """Normalize a raw model response into a safe, terse feature label.
+
+    Strips ``<think>`` reasoning blocks, takes the first line, removes quotes
+    and markdown punctuation, drops trailing separators, then caps the result
+    by word and character count.
+
+    Args:
+        text (str): Raw model output to clean.
+        max_words (int): Maximum number of words to keep (``<= 0`` disables the
+            word cap). Defaults to ``8``.
+        max_chars (int): Maximum character length before truncation on a word
+            boundary. Defaults to ``64``.
+
+    Returns:
+        str: A trimmed feature label, or an empty string for empty input.
+    """
     if not text:
         return ""
     text = re.sub(r"<think>.*?</think>", " ", text, flags=re.DOTALL | re.IGNORECASE)
@@ -212,6 +359,16 @@ def clean_label(text: str, *, max_words: int = 8, max_chars: int = 64) -> str:
 
 
 def _classify_http_error(code: int, body: str) -> str:
+    """Map an OpenRouter HTTP failure to a coarse status string.
+
+    Args:
+        code (int): HTTP status code from the failed response.
+        body (str): Response body text used for keyword heuristics.
+
+    Returns:
+        str: :data:`STATUS_RATE_LIMITED`, :data:`STATUS_OUT_OF_CREDITS`, or
+        :data:`STATUS_ERROR`.
+    """
     lowered = (body or "").lower()
     if code == 429 or "rate limit" in lowered or "rate-limit" in lowered:
         return STATUS_RATE_LIMITED
@@ -221,16 +378,33 @@ def _classify_http_error(code: int, body: str) -> str:
 
 
 def summarize_prompt(prompt: str, *, model: str | None = None, key: str | None = None) -> SummaryResult:
-    """Compress a prompt into a short OpenRouter feature label."""
+    """Compress a prompt into a short OpenRouter feature label.
+
+    Returns a cached label when available, otherwise calls the OpenRouter chat
+    completions endpoint and caches a successful result. All network and
+    parsing failures are reported as structured statuses rather than raised.
+
+    Args:
+        prompt (str): Free-form task description to summarize.
+        model (str | None): Override model id; defaults to :func:`summary_model`.
+        key (str | None): Override API key; defaults to :func:`api_key`.
+
+    Returns:
+        SummaryResult: ``status`` is one of the ``STATUS_*`` constants, with the
+        feature ``label`` populated on success and ``detail`` carrying context.
+    """
     cleaned_prompt = " ".join((prompt or "").split())
     if not cleaned_prompt:
+        logger.debug("summarize_prompt skipped empty prompt")
         return SummaryResult(STATUS_SKIPPED, "", "empty prompt")
     resolved_model = model or summary_model()
     cached_label = read_cached_label(resolved_model, cleaned_prompt)
     if cached_label:
+        logger.info("summarize_prompt cache hit model=%s", resolved_model)
         return SummaryResult(STATUS_OK, cached_label, "cache")
     resolved_key = (key or "").strip() or api_key()
     if not resolved_key:
+        logger.warning("summarize_prompt missing OPENROUTER_API_KEY")
         return SummaryResult(STATUS_NO_KEY, "", "no OPENROUTER_API_KEY")
 
     payload = {
@@ -250,6 +424,7 @@ def summarize_prompt(prompt: str, *, model: str | None = None, key: str | None =
     req.add_header("HTTP-Referer", HTTP_REFERER)
     req.add_header("X-Title", X_TITLE)
 
+    logger.info("summarize_prompt requesting model=%s", resolved_model)
     try:
         with request.urlopen(req, timeout=request_timeout()) as resp:
             body = resp.read().decode("utf-8", "replace")
@@ -259,37 +434,68 @@ def summarize_prompt(prompt: str, *, model: str | None = None, key: str | None =
         except Exception:
             err_body = ""
         status = _classify_http_error(exc.code, err_body)
+        logger.warning("summarize_prompt http error code=%s status=%s", exc.code, status)
         return SummaryResult(status, "", f"HTTP {exc.code}: {err_body[:200]}")
     except (error.URLError, TimeoutError, OSError) as exc:
+        logger.warning("summarize_prompt request failed error=%s", exc)
         return SummaryResult(STATUS_ERROR, "", f"request failed: {exc}")
 
     try:
         parsed = json.loads(body)
         content = parsed["choices"][0]["message"]["content"]
     except (ValueError, KeyError, IndexError, TypeError) as exc:
+        logger.warning("summarize_prompt bad response error=%s", exc)
         return SummaryResult(STATUS_ERROR, "", f"bad response: {exc}")
 
     label = clean_label(content or "")
     if not label:
+        logger.warning("summarize_prompt produced empty label model=%s", resolved_model)
         return SummaryResult(STATUS_ERROR, "", "empty label")
     write_cached_label(resolved_model, cleaned_prompt, label)
+    logger.info("summarize_prompt ok model=%s", resolved_model)
     return SummaryResult(STATUS_OK, label, "")
 
 
 def human_project_name(path: str) -> str:
-    """Convert a project path into a display name."""
+    """Convert a filesystem path into a human-friendly project display name.
+
+    Uses the final path component, replaces ``-``/``_`` runs with spaces, and
+    capitalizes the first letter.
+
+    Args:
+        path (str): Project path (or bare name) to humanize.
+
+    Returns:
+        str: A display name, or ``"Project"`` when the input is empty.
+    """
     name = Path(path).name or path
     words = re.sub(r"[-_]+", " ", name).strip()
     return words[:1].upper() + words[1:] if words else "Project"
 
 
 def normalize_task_description(task_description: str | None) -> str:
-    """Normalize task text."""
+    """Collapse whitespace in a task description.
+
+    Args:
+        task_description (str | None): Raw task text, possibly ``None``.
+
+    Returns:
+        str: Whitespace-normalized text, or an empty string for non-strings.
+    """
     return " ".join((task_description or "").split()) if isinstance(task_description, str) else ""
 
 
 def git_summary_for_project(project_path: str | None = "") -> str | None:
-    """Return a compact Git branch label for terminal titles."""
+    """Return a compact Git branch label for use in terminal titles.
+
+    Args:
+        project_path (str | None): Path to a working tree. Empty, ``"."`` or
+            ``None`` short-circuit to ``None``.
+
+    Returns:
+        str | None: The current branch name, ``"detached"`` for a detached
+        HEAD, or ``None`` when the path is not a usable Git repository.
+    """
     if not project_path or str(project_path).strip() in {"", "."}:
         return None
     cwd = str(Path(project_path).expanduser().resolve())
@@ -302,7 +508,8 @@ def git_summary_for_project(project_path: str | None = "") -> str | None:
             timeout=2,
             check=False,
         )
-    except Exception:
+    except Exception as exc:
+        logger.debug("git_summary_for_project failed path=%s error=%s", project_path, exc)
         return None
     branch = (branch_result.stdout or "").strip() if branch_result.returncode == 0 else ""
     if not branch:
@@ -311,7 +518,15 @@ def git_summary_for_project(project_path: str | None = "") -> str | None:
 
 
 def project_git_context(project_path: str | None = "") -> str:
-    """Return the visible project/Git context used in terminal titles."""
+    """Render the project/Git context segment shown in terminal titles.
+
+    Args:
+        project_path (str | None): Path to the active project.
+
+    Returns:
+        str: ``"<Project>"`` or ``"<Project> · <branch>"`` when a branch is
+        available.
+    """
     label = human_project_name(project_path or "")
     git_summary = git_summary_for_project(project_path or "")
     if not git_summary:
@@ -320,7 +535,18 @@ def project_git_context(project_path: str | None = "") -> str:
 
 
 def prompt_title_with_git_context(prompt: str, project_path: str | None = "") -> str:
-    """Render a terminal title with active project/Git context."""
+    """Compose a terminal title from a prompt plus project/Git context.
+
+    The prompt is normalized and truncated so the combined title fits within a
+    255-character budget, preferring to trim the prompt over the context.
+
+    Args:
+        prompt (str): Prompt or feature label to lead the title.
+        project_path (str | None): Path used to derive the trailing context.
+
+    Returns:
+        str: A title string no longer than 255 characters.
+    """
     raw_prompt = prompt.strip()
     normalized_prompt = normalize_task_description(raw_prompt) or ""
     display_prompt = normalized_prompt or raw_prompt[:40]
@@ -338,12 +564,31 @@ def prompt_title_with_git_context(prompt: str, project_path: str | None = "") ->
 
 
 def _project_feature_label_path(project_path: str) -> Path:
+    """Compute the per-project feature-label cache file path.
+
+    Args:
+        project_path (str): Project path used as the cache key.
+
+    Returns:
+        Path: A ``<sha256>.txt`` path inside ``STATE_DIR/feature-label``.
+    """
     key = hashlib.sha256((project_path or "").strip().encode("utf-8")).hexdigest()
     return STATE_DIR / "feature-label" / f"{key}.txt"
 
 
 def store_project_feature_label(project_path: str, label: str) -> None:
-    """Persist the title label for the project."""
+    """Persist the most recent feature label for a project.
+
+    Written atomically and consumed later by :func:`completion_message`.
+    No-ops on an empty label and swallows filesystem errors.
+
+    Args:
+        project_path (str): Project path used as the cache key.
+        label (str): Feature label to store.
+
+    Returns:
+        None
+    """
     label = (label or "").strip()
     if not label:
         return
@@ -353,23 +598,45 @@ def store_project_feature_label(project_path: str, label: str) -> None:
         tmp = path.with_suffix(".tmp")
         tmp.write_text(label, encoding="utf-8")
         tmp.replace(path)
-    except OSError:
-        pass
+        logger.debug("store_project_feature_label stored path=%s", project_path)
+    except OSError as exc:
+        logger.warning("store_project_feature_label failed path=%s error=%s", project_path, exc)
 
 
 def read_project_feature_label(project_path: str) -> str:
-    """Return the latest fresh label for a project."""
+    """Return the latest still-fresh feature label for a project.
+
+    Args:
+        project_path (str): Project path used as the cache key.
+
+    Returns:
+        str: The cached label when present and within
+        :data:`FEATURE_LABEL_TTL_SECONDS`, otherwise an empty string.
+    """
     try:
         path = _project_feature_label_path(project_path)
         if not path.is_file() or (time.time() - path.stat().st_mtime) > FEATURE_LABEL_TTL_SECONDS:
             return ""
         return path.read_text(encoding="utf-8").strip()
-    except OSError:
+    except OSError as exc:
+        logger.warning("read_project_feature_label failed path=%s error=%s", project_path, exc)
         return ""
 
 
 def describe_prompt(prompt: str, project_path: str = "") -> dict[str, str]:
-    """Return title metadata for a prompt."""
+    """Build title metadata for a prompt, summarizing when possible.
+
+    Attempts an OpenRouter summary; on success the label is cached for
+    completion messages and woven into a contextual title. On any non-OK
+    status it falls back to a raw prompt title and logs the reason.
+
+    Args:
+        prompt (str): Free-form prompt text.
+        project_path (str): Project path used for context and label caching.
+
+    Returns:
+        dict[str, str]: Keys ``status``, ``label``, ``title``, and ``detail``.
+    """
     task = normalize_task_description(prompt)
     fallback = prompt_title_with_git_context(prompt, project_path)
     if not task:
@@ -383,12 +650,23 @@ def describe_prompt(prompt: str, project_path: str = "") -> dict[str, str]:
             "title": prompt_title_with_git_context(result.label, project_path),
             "detail": result.detail,
         }
-    append_log(f"summary status={result.status} detail={result.detail}")
+    logger.info("describe_prompt fallback status=%s detail=%s", result.status, result.detail)
     return {"status": result.status, "label": "", "title": fallback, "detail": result.detail}
 
 
 def completion_message(project_name: str, project_path: str = "") -> str:
-    """Build a completion message from the latest stored feature label."""
+    """Build a completion message from the latest stored feature label.
+
+    Args:
+        project_name (str): Explicit display name; when blank it is derived
+            from ``project_path`` (or falls back to ``"this project"``).
+        project_path (str): Project path used to look up the cached label and
+            derive a name.
+
+    Returns:
+        str: ``"Project <name> done with <label>"``, or an empty string when no
+        fresh feature label is cached.
+    """
     label = read_project_feature_label(project_path)
     if not label:
         return ""
@@ -406,7 +684,26 @@ def set_terminal_prompt_title(
     kitty_window_id: str | None = None,
     terminal_device: str | None = None,
 ) -> None:
-    """Set and, in Kitty, lock the window title to the supplied text."""
+    """Set, and within Kitty lock, the terminal window title.
+
+    Prefers Kitty remote-control commands when a window id and the ``kitty``
+    binary are available; otherwise emits an OSC 2 escape sequence to the given
+    terminal device or stdout. No-ops on empty/unprintable titles, dumb
+    terminals, or when no usable output target exists.
+
+    Args:
+        title_text (str): Desired title; whitespace-collapsed and stripped of
+            unprintable characters before use.
+        max_length (int): Maximum title length before truncation. Defaults to
+            ``255``.
+        kitty_window_id (str | None): Target Kitty window id; falls back to the
+            ``KITTY_WINDOW_ID`` environment variable.
+        terminal_device (str | None): Path to a TTY device to receive the OSC
+            escape when Kitty remote control is unavailable.
+
+    Returns:
+        None
+    """
     target_kitty_window = kitty_window_id or os.environ.get("KITTY_WINDOW_ID", "")
     if not title_text or (not target_kitty_window and not terminal_device and not sys.stdout.isatty()) or os.environ.get("TERM") == "dumb":
         return
@@ -426,6 +723,7 @@ def set_terminal_prompt_title(
             for command in commands
         ]
         if all(result.returncode == 0 for result in results):
+            logger.debug("set_terminal_prompt_title via kitty window=%s", target_kitty_window)
             return
     title_sequence = f"\033]2;{title}\007"
     if terminal_device:
@@ -433,16 +731,25 @@ def set_terminal_prompt_title(
             with Path(terminal_device).open("w", encoding="utf-8") as terminal:
                 terminal.write(title_sequence)
                 terminal.flush()
+            logger.debug("set_terminal_prompt_title via device=%s", terminal_device)
             return
         except OSError as exc:
-            append_log(f"terminal title write failed device={terminal_device} error={exc}")
+            logger.warning("terminal title write failed device=%s error=%s", terminal_device, exc)
     if sys.stdout.isatty():
         sys.stdout.write(title_sequence)
         sys.stdout.flush()
 
 
 def user_prompt_from_payload(payload: dict) -> str:
-    """Return prompt text from a Claude hook payload."""
+    """Extract prompt text from a Claude hook payload.
+
+    Args:
+        payload (dict): Decoded hook JSON; the first non-empty string among the
+            ``prompt``, ``message``, and ``input`` keys is used.
+
+    Returns:
+        str: Whitespace-normalized prompt text, or an empty string when absent.
+    """
     for key in ("prompt", "message", "input"):
         value = payload.get(key)
         if isinstance(value, str) and value.strip():
@@ -451,7 +758,15 @@ def user_prompt_from_payload(payload: dict) -> str:
 
 
 def cmd_describe(args: argparse.Namespace) -> int:
-    """Print a prompt title description."""
+    """Handle the ``describe`` subcommand: print a summarized title.
+
+    Args:
+        args (argparse.Namespace): Parsed args with ``prompt``, ``project_path``
+            and ``json`` attributes.
+
+    Returns:
+        int: Process exit code (always ``0``).
+    """
     item = describe_prompt(args.prompt or "", args.project_path or "")
     if args.json:
         print(json.dumps(item, sort_keys=True))
@@ -461,7 +776,16 @@ def cmd_describe(args: argparse.Namespace) -> int:
 
 
 def cmd_title(args: argparse.Namespace) -> int:
-    """Summarize a prompt and set the terminal title."""
+    """Handle the ``title`` subcommand: summarize and set the terminal title.
+
+    Args:
+        args (argparse.Namespace): Parsed args with ``prompt``,
+            ``project_path``, ``kitty_window_id``, ``terminal_device`` and
+            ``print_title`` attributes.
+
+    Returns:
+        int: Process exit code (always ``0``).
+    """
     item = describe_prompt(args.prompt or "", args.project_path or "")
     set_terminal_prompt_title(
         item["title"],
@@ -474,7 +798,16 @@ def cmd_title(args: argparse.Namespace) -> int:
 
 
 def cmd_completion_message(args: argparse.Namespace) -> int:
-    """Print the latest stored completion message for a project."""
+    """Handle the ``completion-message`` subcommand.
+
+    Args:
+        args (argparse.Namespace): Parsed args with ``project_name`` and
+            ``project_path`` attributes.
+
+    Returns:
+        int: Process exit code (always ``0``). Prints nothing when no cached
+        label exists.
+    """
     message = completion_message(args.project_name or "", args.project_path or "")
     if message:
         print(message)
@@ -482,16 +815,30 @@ def cmd_completion_message(args: argparse.Namespace) -> int:
 
 
 def cmd_claude_hook(_args: argparse.Namespace) -> int:
-    """Handle Claude Code UserPromptSubmit hook payloads from stdin."""
+    """Handle the ``claude-hook`` subcommand for ``UserPromptSubmit`` payloads.
+
+    Reads a hook JSON payload from stdin and, for ``UserPromptSubmit`` events,
+    derives a title and applies it to the terminal. Malformed input, non-matching
+    events, and empty prompts are silently ignored so the hook never disrupts
+    Claude Code.
+
+    Args:
+        _args (argparse.Namespace): Unused parsed args (the payload is stdin).
+
+    Returns:
+        int: Process exit code (always ``0``).
+    """
     try:
         payload = json.loads(sys.stdin.read() or "{}")
     except ValueError:
+        logger.debug("cmd_claude_hook ignoring invalid JSON payload")
         return 0
     if payload.get("hook_event_name") != "UserPromptSubmit":
         return 0
     prompt = user_prompt_from_payload(payload)
     project_path = os.environ.get("CODEX_AGENT_PROJECT_PATH", "") or payload.get("cwd", "")
     if not prompt:
+        logger.debug("cmd_claude_hook empty prompt; skipping")
         return 0
     item = describe_prompt(prompt, project_path)
     terminal_device = os.environ.get("CODEX_AGENT_TERMINAL_DEVICE", "")
@@ -504,7 +851,17 @@ def cmd_claude_hook(_args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Build the CLI argument parser."""
+    """Construct the argparse CLI with all subcommands.
+
+    Subcommands: ``describe``, ``title``, ``completion-message`` and
+    ``claude-hook``. The ``title`` parser also accepts ``--codex-home``,
+    ``--kitty-listen-on`` and ``--kitty-pid`` for backward compatibility with
+    external callers (Agent Command Center); they are intentionally accepted
+    and ignored so passing them never errors.
+
+    Returns:
+        argparse.ArgumentParser: A parser whose subcommands set ``func``.
+    """
     parser = argparse.ArgumentParser(description="Generate Kitty terminal titles for agent prompts.")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -517,6 +874,8 @@ def build_parser() -> argparse.ArgumentParser:
     title = sub.add_parser("title", help="summarize a prompt and set the terminal title")
     title.add_argument("--prompt", required=True)
     title.add_argument("--project-path", default="")
+    # --codex-home, --kitty-listen-on and --kitty-pid are accepted but unused;
+    # they preserve compatibility with external callers that still pass them.
     title.add_argument("--codex-home", default="")
     title.add_argument("--kitty-window-id", default="")
     title.add_argument("--kitty-listen-on", default="")
@@ -537,9 +896,18 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run the command-line interface."""
+    """Entry point: configure logging, parse arguments, dispatch the command.
+
+    Args:
+        argv (list[str] | None): Argument vector; defaults to ``sys.argv[1:]``.
+
+    Returns:
+        int: The selected subcommand's exit code.
+    """
+    configure_logging()
     parser = build_parser()
     args = parser.parse_args(argv)
+    logger.debug("main dispatching command=%s", getattr(args, "command", ""))
     return int(args.func(args) or 0)
 
 
