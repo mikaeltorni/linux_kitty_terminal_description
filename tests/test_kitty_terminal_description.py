@@ -36,7 +36,8 @@ def test_describe_prompt_falls_back_without_key(monkeypatch, tmp_path):
     """Missing OpenRouter credentials should still produce a raw prompt title."""
     mod = load_module()
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    monkeypatch.setenv("OPENROUTER_ENV_FILE", str(tmp_path / "missing.env"))
+    monkeypatch.setattr(mod, "env_file_candidates", lambda: [tmp_path / "missing.env"])
+    monkeypatch.setattr(mod, "read_cached_label", lambda model, prompt: None)
     monkeypatch.setattr(mod, "git_summary_for_project", lambda project_path="": "main")
 
     result = mod.describe_prompt("fix failing tests", "/repo/example_project")
