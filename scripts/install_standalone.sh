@@ -97,13 +97,17 @@ configure_claude_hook() {
   msg "Configured Claude UserPromptSubmit hook"
 }
 
-# report_codex_detection - print whether Codex is installed; informational
-# only, since Codex prompt titles are wired through Agent Command Center.
-report_codex_detection() {
+# configure_codex_hook - wire the Codex prompt-title summary path. Codex has no
+# native prompt-submit hook, so its titles are summarized by the Agent Command
+# Center tracker, which shells out to this repository's kitty-terminal-description
+# CLI (the single source of OpenRouter summarization). This step confirms the
+# wiring and reports whether Codex is present; the actual call happens at agent
+# launch time inside the tracker.
+configure_codex_hook() {
   if [ -d "$TARGET_HOME/.codex" ] || run_as_target bash -lc 'command -v codex >/dev/null 2>&1'; then
-    msg "Codex detected; Agent Command Center will use kitty-terminal-description when installed"
+    msg "Codex detected; prompt titles use kitty-terminal-description via the Agent Command Center tracker"
   else
-    msg "Codex not detected; skipping Codex hook"
+    msg "Codex not detected; skipping Codex prompt-title hook"
   fi
 }
 

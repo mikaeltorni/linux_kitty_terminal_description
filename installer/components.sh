@@ -16,5 +16,5 @@ ISC_COMPONENTS=(
   "env_file|OpenRouter API key env file|on|install_env_file"
   "kitty_remote_control|Enable Kitty remote control|on|configure_kitty_remote_control"
   "claude_hook|Claude Code UserPromptSubmit hook|on|configure_claude_hook"
-  "codex_detection|Codex detection notice|on|report_codex_detection"
+  "codex_hook|Codex prompt-title hook (via Agent Command Center tracker)|on|configure_codex_hook"
 )

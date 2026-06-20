@@ -4,12 +4,16 @@ Standalone Kitty terminal title generation for Codex and Claude prompts. It
 summarizes a prompt with OpenRouter, includes project/Git context in the title,
 and falls back to the raw prompt when the API key or network is unavailable.
 
-This repository is also used by
-[`agent_command_center`](https://github.com/mikaeltorni/agent_command_center).
-When Agent Command Center is installed on the same machine, its installer copies
-`OPENROUTER_API_KEY` from `agent_command_center/.env` into this tool's local env
-file and uses `kitty-terminal-description` for prompt title summaries when the
-command is available.
+This repository is the **single source of truth** for OpenRouter prompt
+summarization across the desktop setup. The summarizer used to be duplicated
+inside [`agent_command_center`](https://github.com/mikaeltorni/agent_command_center);
+it now lives here only, exposed through the `kitty-terminal-description` CLI and
+installed into the Claude Code and Codex agent hooks. When Agent Command Center
+is installed on the same machine, its installer copies `OPENROUTER_API_KEY` from
+`agent_command_center/.env` into this tool's local env file, and its tracker
+shells out to `kitty-terminal-description` for every prompt-title and
+finish-announcement summary (degrading to the raw-prompt title when the command
+is absent — it keeps no summarizer of its own).
 
 ## Repository dependencies
 
@@ -19,11 +23,13 @@ own and degrades to the raw prompt when the API key or network is unavailable.
 - **Build-time (soft):** the shared installer component framework
   [`linux_installation_scripts_functions`](https://github.com/mikaeltorni/linux_installation_scripts_functions) —
   loaded from a sibling checkout when present, otherwise downloaded on demand.
-- **Optional integration (one-way, consumer):** when
+- **Consumer (Agent Command Center):** when
   [`agent_command_center`](https://github.com/mikaeltorni/agent_command_center)
   is installed on the same machine, *its* installer copies `OPENROUTER_API_KEY`
-  into this tool's env file and wires `kitty-terminal-description` for prompt
-  titles. This repository does not require ACC to function.
+  into this tool's env file, and its tracker calls `kitty-terminal-description`
+  for all prompt-title and finish-label summaries (this repo owns the summarizer;
+  ACC no longer bundles its own). This repository does not require ACC to
+  function — the Claude Code hook works on its own.
 
 See the full cross-repository map in
 [installation_scripts/DEPENDENCIES.md](https://github.com/mikaeltorni/installation_scripts/blob/master/DEPENDENCIES.md).
@@ -100,7 +106,7 @@ or none, and **Enter** installs the selection. Components:
 | `env_file` | OpenRouter API key env file | on |
 | `kitty_remote_control` | Enable Kitty remote control | on |
 | `claude_hook` | Claude Code UserPromptSubmit hook | on |
-| `codex_detection` | Codex detection notice | on |
+| `codex_hook` | Codex prompt-title hook (via Agent Command Center tracker) | on |
 
 
 ## Disclaimer
