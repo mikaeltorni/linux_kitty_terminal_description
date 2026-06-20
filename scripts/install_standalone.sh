@@ -17,8 +17,12 @@ RUNTIME_DIR="/run/user/${TARGET_UID}"
 USER_BUS="unix:path=${RUNTIME_DIR}/bus"
 DISPLAY_VAL="${DISPLAY:-:0}"
 
+# msg - print a highlighted progress line to stdout. Args: $* message text.
 msg() { printf '\n==> %s\n' "$*"; }
 
+# run_as_target - run "$@" as the target user with a full desktop environment
+# (HOME, DBUS, DISPLAY, XDG_RUNTIME_DIR). Uses sudo only when the current user
+# differs from the target, keeping the installer sudo-free in the common case.
 run_as_target() {
   if [ "$(id -un)" = "$TARGET_USER" ]; then
     env \
@@ -41,6 +45,9 @@ run_as_target() {
   fi
 }
 
+# install_env_file - copy the repository .env (mode 0600) into the user's
+# config dir, or create an empty placeholder, without overwriting an existing
+# key. Non-destructive and idempotent.
 install_env_file() {
   local source_env="$SCRIPT_DIR/.env"
   local config_dir="$TARGET_HOME/.config/linux-kitty-terminal-description"
@@ -57,6 +64,8 @@ install_env_file() {
   fi
 }
 
+# configure_kitty_remote_control - append "allow_remote_control yes" to the
+# user's kitty.conf once so the CLI can keep tab titles in sync. Idempotent.
 configure_kitty_remote_control() {
   local kitty_config_dir="$TARGET_HOME/.config/kitty"
   local kitty_config_file="$kitty_config_dir/kitty.conf"
@@ -71,6 +80,8 @@ EOF
   fi
 }
 
+# configure_claude_hook - wire the Claude UserPromptSubmit hook via
+# claude_hook_config.py when Claude Code is present; skip silently otherwise.
 configure_claude_hook() {
   local claude_dir="$TARGET_HOME/.claude"
   local settings_file="$claude_dir/settings.json"
@@ -86,6 +97,8 @@ configure_claude_hook() {
   msg "Configured Claude UserPromptSubmit hook"
 }
 
+# report_codex_detection - print whether Codex is installed; informational
+# only, since Codex prompt titles are wired through Agent Command Center.
 report_codex_detection() {
   if [ -d "$TARGET_HOME/.codex" ] || run_as_target bash -lc 'command -v codex >/dev/null 2>&1'; then
     msg "Codex detected; Agent Command Center will use kitty-terminal-description when installed"
@@ -116,6 +129,8 @@ declare -F isc_activate_components >/dev/null 2>&1 || \
 isc_activate_components
 source "$SCRIPT_DIR/installer/components.sh"
 
+# main - run the full install, delegating component selection/execution to the
+# shared component_main runtime. Args: forwarded component flags ("$@").
 main() {
   msg "Installing Linux Kitty Terminal Description for $TARGET_USER"
   component_main "$@"

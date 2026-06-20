@@ -17,10 +17,19 @@ logger = logging.getLogger(__name__)
 
 
 def _read_settings(settings_file: Path) -> dict[str, Any]:
-    """Read Claude settings JSON, returning an empty object when unavailable."""
+    """Read a Claude settings JSON file defensively.
+
+    Args:
+        settings_file (Path): Path to the ``settings.json`` file.
+
+    Returns:
+        dict[str, Any]: The parsed settings object, or an empty dict when the
+        file is missing, unreadable, or not a JSON object.
+    """
     try:
         settings = json.loads(settings_file.read_text(encoding="utf-8"))
         if isinstance(settings, dict):
+            logger.debug("Read Claude settings from %s", settings_file)
             return settings
         logger.warning("Ignoring non-object Claude settings file: %s", settings_file)
     except Exception as exc:
@@ -29,7 +38,15 @@ def _read_settings(settings_file: Path) -> dict[str, Any]:
 
 
 def _entry_has_command(entry: Any, command: str) -> bool:
-    """Return whether one Claude hook matcher entry already runs command."""
+    """Check whether a single hook matcher entry already runs a command.
+
+    Args:
+        entry (Any): One ``UserPromptSubmit`` matcher entry (expected dict).
+        command (str): The hook command string to look for.
+
+    Returns:
+        bool: ``True`` when ``entry`` contains a hook running ``command``.
+    """
     if not isinstance(entry, dict):
         return False
     hooks = entry.get("hooks", [])
@@ -39,7 +56,21 @@ def _entry_has_command(entry: Any, command: str) -> bool:
 
 
 def configure_user_prompt_submit_hook(settings_file: Path, hook_command: str) -> None:
-    """Ensure the Claude UserPromptSubmit hook contains ``hook_command`` once."""
+    """Ensure the Claude ``UserPromptSubmit`` hook runs ``hook_command`` once.
+
+    Idempotent and non-destructive: existing hooks and unrelated settings are
+    preserved, the command is appended to the empty-matcher entry when present
+    (otherwise a new matcher entry is created), and re-running makes no further
+    change. Malformed ``hooks`` containers are repaired in place.
+
+    Args:
+        settings_file (Path): Path to the Claude ``settings.json`` to update;
+            parent directories are created as needed.
+        hook_command (str): The command to register under ``UserPromptSubmit``.
+
+    Returns:
+        None
+    """
     settings = _read_settings(settings_file)
     hooks = settings.setdefault("hooks", {})
     if not isinstance(hooks, dict):
@@ -65,11 +96,20 @@ def configure_user_prompt_submit_hook(settings_file: Path, hook_command: str) ->
 
 
 def main(argv: list[str] | None = None) -> int:
-    """CLI entrypoint used by the shell installer."""
+    """CLI entrypoint used by ``install_standalone.sh``.
+
+    Args:
+        argv (list[str] | None): Argument vector ``[settings_file, hook_command]``;
+            defaults to ``sys.argv[1:]``.
+
+    Returns:
+        int: ``0`` on success, ``2`` on incorrect usage.
+    """
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     args = list(sys.argv[1:] if argv is None else argv)
     if len(args) != 2:
         print("Usage: claude_hook_config.py <settings.json> <hook-command>", file=sys.stderr)
+        logger.warning("Invalid arguments: expected 2, received %d", len(args))
         return 2
     configure_user_prompt_submit_hook(Path(args[0]), args[1])
     return 0
