@@ -11,6 +11,23 @@ When Agent Command Center is installed on the same machine, its installer copies
 file and uses `kitty-terminal-description` for prompt title summaries when the
 command is available.
 
+## Repository dependencies
+
+This repository installs and runs **standalone** — it summarizes prompts on its
+own and degrades to the raw prompt when the API key or network is unavailable.
+
+- **Build-time (soft):** the shared installer component framework
+  [`linux_installation_scripts_functions`](https://github.com/mikaeltorni/linux_installation_scripts_functions) —
+  loaded from a sibling checkout when present, otherwise downloaded on demand.
+- **Optional integration (one-way, consumer):** when
+  [`agent_command_center`](https://github.com/mikaeltorni/agent_command_center)
+  is installed on the same machine, *its* installer copies `OPENROUTER_API_KEY`
+  into this tool's env file and wires `kitty-terminal-description` for prompt
+  titles. This repository does not require ACC to function.
+
+See the full cross-repository map in
+[installation_scripts/DEPENDENCIES.md](https://github.com/mikaeltorni/installation_scripts/blob/master/DEPENDENCIES.md).
+
 ## Install
 
 ```bash
