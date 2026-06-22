@@ -130,6 +130,9 @@ for __isc_d in "${ISC_FUNCTIONS_DIR:-}" \
 done
 declare -F isc_activate_components >/dev/null 2>&1 || \
   source <(curl -fsSL "https://raw.githubusercontent.com/mikaeltorni/linux_installation_scripts_functions/${ISC_FUNCTIONS_REF:-master}/component_loader.sh")
+# Shared install-time helpers (msg, run_as_target) from the same framework
+# checkout, before main()/component_main runs any component.
+isc_load_helpers
 isc_activate_components
 source "$SCRIPT_DIR/installer/components.sh"
 

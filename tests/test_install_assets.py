@@ -8,11 +8,14 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def test_installer_is_sudo_free_and_installs_cli():
-    """The installer should install the CLI without unconditional sudo."""
+    """The installer should install the CLI and use the shared (sudo-free) helpers."""
     source = (ROOT / "scripts" / "install_standalone.sh").read_text(encoding="utf-8")
 
     assert 'install -D -m 0755 "$SCRIPT_DIR/scripts/kitty_terminal_description.py"' in source
-    assert "sudo -H -u" in source
+    # The sudo-free run_as_target now comes from the framework's
+    # installer_helpers.sh (loaded via isc_load_helpers); no vendored copy here.
+    assert "isc_load_helpers" in source
+    assert "run_as_target() {" not in source
     assert "apt-get" not in source
 
 
