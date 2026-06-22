@@ -17,46 +17,25 @@ RUNTIME_DIR="/run/user/${TARGET_UID}"
 USER_BUS="unix:path=${RUNTIME_DIR}/bus"
 DISPLAY_VAL="${DISPLAY:-:0}"
 
-# msg - print a highlighted progress line to stdout. Args: $* message text.
-msg() { printf '\n==> %s\n' "$*"; }
+# The shared install-time helpers (msg, run_as_target) come from the framework's
+# installer_helpers.sh, loaded via isc_load_helpers below before main() runs any
+# component. No vendored copy here.
 
-# run_as_target - run "$@" as the target user with a full desktop environment
-# (HOME, DBUS, DISPLAY, XDG_RUNTIME_DIR). Uses sudo only when the current user
-# differs from the target, keeping the installer sudo-free in the common case.
-run_as_target() {
-  if [ "$(id -un)" = "$TARGET_USER" ]; then
-    env \
-      HOME="$TARGET_HOME" \
-      USER="$TARGET_USER" \
-      LOGNAME="$TARGET_USER" \
-      XDG_RUNTIME_DIR="$RUNTIME_DIR" \
-      DBUS_SESSION_BUS_ADDRESS="$USER_BUS" \
-      DISPLAY="$DISPLAY_VAL" \
-      "$@"
-  else
-    sudo -H -u "$TARGET_USER" env \
-      HOME="$TARGET_HOME" \
-      USER="$TARGET_USER" \
-      LOGNAME="$TARGET_USER" \
-      XDG_RUNTIME_DIR="$RUNTIME_DIR" \
-      DBUS_SESSION_BUS_ADDRESS="$USER_BUS" \
-      DISPLAY="$DISPLAY_VAL" \
-      "$@"
-  fi
-}
-
-# install_env_file - copy the repository .env (mode 0600) into the user's
-# config dir, or create an empty placeholder, without overwriting an existing
-# key. Non-destructive and idempotent.
+# install_env_file - copy only OPENROUTER_API_KEY from the source env into the
+# user's config dir (mode 0600), or create an empty placeholder. The source
+# defaults to this repository's own .env but can be overridden with
+# KITTY_TERMINAL_DESCRIPTION_SOURCE_ENV so a consumer (e.g. Agent Command Center)
+# can hand over its .env without leaking unrelated secrets. Non-destructive and
+# idempotent.
 install_env_file() {
-  local source_env="$SCRIPT_DIR/.env"
+  local source_env="${KITTY_TERMINAL_DESCRIPTION_SOURCE_ENV:-$SCRIPT_DIR/.env}"
   local config_dir="$TARGET_HOME/.config/linux-kitty-terminal-description"
   local target_env="$config_dir/openrouter.env"
 
   run_as_target mkdir -p "$config_dir"
   if [ -f "$source_env" ] && grep -Eq '^[[:space:]]*(export[[:space:]]+)?OPENROUTER_API_KEY=' "$source_env"; then
-    run_as_target install -m 0600 "$source_env" "$target_env"
-    msg "Installed OpenRouter env file at $target_env"
+    run_as_target python3 "$SCRIPT_DIR/scripts/openrouter_env.py" copy-key "$source_env" "$target_env"
+    msg "Installed OpenRouter key at $target_env"
   elif [ ! -f "$target_env" ]; then
     run_as_target touch "$target_env"
     run_as_target chmod 0600 "$target_env"
