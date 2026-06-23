@@ -1,5 +1,7 @@
 # Linux Kitty Terminal Description
 
+> Part of [installation_scripts](https://github.com/mikaeltorni/installation_scripts) — generates **Kitty** terminal titles by summarizing Codex/Claude prompts via **OpenRouter**. Tested on Ubuntu 24.04.4 LTS; the Python summarizer is OS-portable (Kitty runs on Linux/macOS/Windows; install paths untested off Ubuntu).
+
 Standalone Kitty terminal title generation for Codex and Claude prompts. It
 summarizes a prompt with OpenRouter, includes project/Git context in the title,
 and falls back to the raw prompt when the API key or network is unavailable.
