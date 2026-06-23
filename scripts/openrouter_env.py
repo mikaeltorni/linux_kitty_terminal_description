@@ -15,10 +15,16 @@ Components:
 from __future__ import annotations
 
 import argparse
-import logging
+import sys
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from logging_utils import get_logger, log_call
+
+logger = get_logger("openrouter_env", "events.log", stream=True)
 
 
 def _env_key(line: str) -> str:
@@ -30,6 +36,7 @@ def _env_key(line: str) -> str:
     return key
 
 
+@log_call(logger)
 def copy_openrouter_key(source_env: Path, target_env: Path) -> bool:
     """Copy only OPENROUTER_API_KEY from ``source_env`` to ``target_env``.
 

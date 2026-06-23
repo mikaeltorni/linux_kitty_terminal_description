@@ -8,12 +8,17 @@ Components:
 from __future__ import annotations
 
 import json
-import logging
 import sys
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger(__name__)
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from logging_utils import get_logger, log_call
+
+logger = get_logger("claude_hook_config", "events.log", stream=True)
 
 
 def _read_settings(settings_file: Path) -> dict[str, Any]:
@@ -32,7 +37,7 @@ def _read_settings(settings_file: Path) -> dict[str, Any]:
             logger.debug("Read Claude settings from %s", settings_file)
             return settings
         logger.warning("Ignoring non-object Claude settings file: %s", settings_file)
-    except Exception as exc:
+    except (OSError, ValueError, TypeError) as exc:
         logger.warning("Could not read Claude settings from %s: %s", settings_file, exc)
     return {}
 
@@ -55,6 +60,7 @@ def _entry_has_command(entry: Any, command: str) -> bool:
     return any(isinstance(hook, dict) and hook.get("command") == command for hook in hooks)
 
 
+@log_call(logger)
 def configure_user_prompt_submit_hook(settings_file: Path, hook_command: str) -> None:
     """Ensure the Claude ``UserPromptSubmit`` hook runs ``hook_command`` once.
 
@@ -105,7 +111,6 @@ def main(argv: list[str] | None = None) -> int:
     Returns:
         int: ``0`` on success, ``2`` on incorrect usage.
     """
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     args = list(sys.argv[1:] if argv is None else argv)
     if len(args) != 2:
         print("Usage: claude_hook_config.py <settings.json> <hook-command>", file=sys.stderr)

@@ -2,7 +2,7 @@
 """kitty_terminal_description.py — Prompt summaries for Kitty terminal titles.
 
 Components:
-  - Centralized logging to .log/events.log via configure_logging().
+  - Centralized logging to .log/events.log via logging_utils.
   - OpenRouter summary helpers for short prompt labels.
   - Project/Git context helpers for readable terminal titles.
   - Feature-label cache shared by title and completion-message callers.
@@ -19,7 +19,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import logging
 import os
 import re
 import shutil
@@ -29,6 +28,12 @@ import time
 from pathlib import Path
 from typing import NamedTuple
 from urllib import error, request
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from logging_utils import get_logger
 
 
 DEFAULT_SUMMARY_MODEL = "qwen/qwen3.5-flash-02-23"
@@ -56,14 +61,6 @@ STATE_DIR = Path(
         Path.home() / ".local" / "state" / "linux-kitty-terminal-description",
     )
 )
-LOG_DIR = Path(
-    os.environ.get(
-        "KITTY_TERMINAL_DESCRIPTION_LOG_DIR",
-        Path.home() / "projects" / "linux_kitty_terminal_description" / ".log",
-    )
-)
-LOG_FILE = LOG_DIR / "events.log"
-
 
 class SummaryResult(NamedTuple):
     """Outcome of a prompt-summary attempt.
@@ -81,39 +78,7 @@ class SummaryResult(NamedTuple):
     detail: str = ""
 
 
-logger = logging.getLogger("kitty_terminal_description")
-
-
-def configure_logging() -> logging.Logger:
-    """Attach a repository-local file handler to the module logger once.
-
-    The handler writes timestamped, level-tagged, searchable lines to
-    ``.log/events.log`` under the repository root (or the directory named by
-    ``KITTY_TERMINAL_DESCRIPTION_LOG_DIR``). Creating the directory or file is
-    best-effort: when it fails (read-only deploy target, missing parents) a
-    ``NullHandler`` is attached instead so logging calls stay harmless.
-
-    Returns:
-        logging.Logger: The configured module logger (idempotent on re-call).
-    """
-    if logger.handlers:
-        return logger
-    handler: logging.Handler
-    try:
-        LOG_DIR.mkdir(parents=True, exist_ok=True)
-        handler = logging.FileHandler(LOG_FILE, encoding="utf-8")
-        handler.setFormatter(
-            logging.Formatter(
-                "%(asctime)s %(levelname)s %(name)s: %(message)s",
-                "%Y-%m-%dT%H:%M:%S",
-            )
-        )
-    except OSError:
-        handler = logging.NullHandler()
-    logger.addHandler(handler)
-    logger.setLevel(logging.DEBUG)
-    logger.propagate = False
-    return logger
+logger = get_logger("kitty_terminal_description", "events.log")
 
 
 def summary_model() -> str:
@@ -431,7 +396,7 @@ def summarize_prompt(prompt: str, *, model: str | None = None, key: str | None =
     except error.HTTPError as exc:
         try:
             err_body = exc.read().decode("utf-8", "replace")
-        except Exception:
+        except (OSError, ValueError):
             err_body = ""
         status = _classify_http_error(exc.code, err_body)
         logger.warning("summarize_prompt http error code=%s status=%s", exc.code, status)
@@ -508,7 +473,7 @@ def git_summary_for_project(project_path: str | None = "") -> str | None:
             timeout=2,
             check=False,
         )
-    except Exception as exc:
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
         logger.debug("git_summary_for_project failed path=%s error=%s", project_path, exc)
         return None
     branch = (branch_result.stdout or "").strip() if branch_result.returncode == 0 else ""
@@ -896,7 +861,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Entry point: configure logging, parse arguments, dispatch the command.
+    """Entry point: parse arguments and dispatch the selected command.
 
     Args:
         argv (list[str] | None): Argument vector; defaults to ``sys.argv[1:]``.
@@ -904,7 +869,6 @@ def main(argv: list[str] | None = None) -> int:
     Returns:
         int: The selected subcommand's exit code.
     """
-    configure_logging()
     parser = build_parser()
     args = parser.parse_args(argv)
     logger.debug("main dispatching command=%s", getattr(args, "command", ""))

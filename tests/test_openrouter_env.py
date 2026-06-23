@@ -58,3 +58,12 @@ def test_installer_uses_overridable_source_env_and_key_only_copy():
     assert "openrouter_env.py" in source
     # The old whole-file copy (which would leak unrelated secrets) is gone.
     assert 'install -m 0600 "$source_env" "$target_env"' not in source
+
+
+def test_openrouter_env_uses_centralized_stderr_logging():
+    """The helper CLI should route install diagnostics through logging_utils."""
+    source = MODULE_PATH.read_text(encoding="utf-8")
+
+    assert "from logging_utils import get_logger, log_call" in source
+    assert 'get_logger("openrouter_env", "events.log", stream=True)' in source
+    assert "logging.basicConfig" not in source

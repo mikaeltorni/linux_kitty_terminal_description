@@ -23,23 +23,12 @@ def load_module():
     return module
 
 
-def test_configure_logging_writes_to_repo_local_log(monkeypatch, tmp_path):
-    """configure_logging should emit timestamped lines under the .log dir."""
+def test_module_uses_centralized_logger():
+    """The CLI should import logging from the shared logging module."""
     mod = load_module()
-    log_dir = tmp_path / ".log"
-    monkeypatch.setattr(mod, "LOG_DIR", log_dir)
-    monkeypatch.setattr(mod, "LOG_FILE", log_dir / "events.log")
-    mod.logger.handlers.clear()
 
-    logger = mod.configure_logging()
-    logger.info("unit test log line")
-    for handler in logger.handlers:
-        handler.flush()
-
-    contents = (log_dir / "events.log").read_text(encoding="utf-8")
-    assert "unit test log line" in contents
-    assert "INFO" in contents
-    mod.logger.handlers.clear()
+    assert mod.logger.name == "kitty_terminal_description"
+    assert mod.get_logger.__module__ == "logging_utils"
 
 
 def test_clean_label_strips_quotes_reasoning_and_caps_words():
