@@ -12,6 +12,7 @@ def test_installer_is_sudo_free_and_installs_cli():
     source = (ROOT / "scripts" / "install_standalone.sh").read_text(encoding="utf-8")
 
     assert 'install -D -m 0755 "$SCRIPT_DIR/scripts/kitty_terminal_description.py"' in source
+    assert 'install -D -m 0644 "$SCRIPT_DIR/scripts/logging_utils.py"' in source
     # The sudo-free run_as_target now comes from the framework's
     # installer_helpers.sh (loaded via isc_load_helpers); no vendored copy here.
     assert "isc_load_helpers" in source
@@ -36,3 +37,12 @@ def test_env_and_logs_are_ignored():
 
     assert ".env" in ignore
     assert ".log/" in ignore
+
+
+def test_installer_reports_idempotent_component_actions():
+    """Installer component branches should explain installs, skips, and no-ops."""
+    source = (ROOT / "scripts" / "install_standalone.sh").read_text(encoding="utf-8")
+
+    assert "Installed kitty-terminal-description CLI" in source
+    assert "OpenRouter env file already exists" in source
+    assert "Kitty remote control already enabled" in source

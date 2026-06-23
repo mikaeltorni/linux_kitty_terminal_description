@@ -40,6 +40,8 @@ install_env_file() {
     run_as_target touch "$target_env"
     run_as_target chmod 0600 "$target_env"
     msg "Created empty env file at $target_env"
+  else
+    msg "OpenRouter env file already exists at $target_env; leaving it unchanged"
   fi
 }
 
@@ -56,6 +58,9 @@ configure_kitty_remote_control() {
 # Required for linux_kitty_terminal_description to keep prompt titles in Kitty tabs.
 allow_remote_control yes
 EOF
+    msg "Enabled Kitty remote control in $kitty_config_file"
+  else
+    msg "Kitty remote control already enabled in $kitty_config_file"
   fi
 }
 
@@ -96,6 +101,8 @@ install_cli() {
   local bin_dir="$TARGET_HOME/.local/bin"
   run_as_target mkdir -p "$bin_dir"
   run_as_target install -D -m 0755 "$SCRIPT_DIR/scripts/kitty_terminal_description.py" "$bin_dir/kitty-terminal-description"
+  run_as_target install -D -m 0644 "$SCRIPT_DIR/scripts/logging_utils.py" "$bin_dir/logging_utils.py"
+  msg "Installed kitty-terminal-description CLI at $bin_dir/kitty-terminal-description"
 }
 
 # Component selection runtime and this repository's component manifest.
