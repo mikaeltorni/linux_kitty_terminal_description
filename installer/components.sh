@@ -7,12 +7,17 @@
 # component_main from component_runtime.sh.
 #
 # Entry format: "id|label|default(on/off)|function".
+#
+# The CLI itself is the program's non-optional core and is not listed here: it is
+# installed unconditionally by the ensure_core_cli preflight (see
+# install_standalone.sh) before any component below runs. Every entry here is an
+# optional customization the user can freely toggle; the core keeps working no
+# matter which ones are selected or deselected.
 
 ISC_REPO_NAME="linux_kitty_terminal_description"
 ISC_REPO_LABEL="Kitty prompt-title summaries"
 
 ISC_COMPONENTS=(
-  "cli|kitty-terminal-description CLI|on|install_cli"
   "env_file|OpenRouter API key env file|on|install_env_file"
   "kitty_remote_control|Enable Kitty remote control|on|configure_kitty_remote_control"
   "claude_hook|Claude Code UserPromptSubmit hook|on|configure_claude_hook"

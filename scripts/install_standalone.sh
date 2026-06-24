@@ -96,13 +96,30 @@ configure_codex_hook() {
 }
 
 # install_cli - install the kitty-terminal-description CLI into the target
-# user's ~/.local/bin.
+# user's ~/.local/bin. This is the program's core: every other component (the
+# Claude/Codex hooks, the Agent Command Center tracker) shells out to it. It is
+# installed unconditionally via ensure_core_cli (the component preflight) before
+# any optional component runs, so a user can deselect every customization and the
+# core still works. The __core_cli_installed guard collapses the preflight and
+# any direct call into a single install per run.
+__core_cli_installed=0
 install_cli() {
+  if [ "$__core_cli_installed" = "1" ]; then
+    return 0
+  fi
   local bin_dir="$TARGET_HOME/.local/bin"
   run_as_target mkdir -p "$bin_dir"
   run_as_target install -D -m 0755 "$SCRIPT_DIR/scripts/kitty_terminal_description.py" "$bin_dir/kitty-terminal-description"
   run_as_target install -D -m 0644 "$SCRIPT_DIR/scripts/logging_utils.py" "$bin_dir/logging_utils.py"
+  __core_cli_installed=1
   msg "Installed kitty-terminal-description CLI at $bin_dir/kitty-terminal-description"
+}
+
+# ensure_core_cli - component preflight that guarantees the core CLI is present
+# regardless of which optional components were selected, so the hook components
+# never wire to a missing kitty-terminal-description command.
+ensure_core_cli() {
+  install_cli
 }
 
 # Component selection runtime and this repository's component manifest.
@@ -121,6 +138,11 @@ declare -F isc_activate_components >/dev/null 2>&1 || \
 isc_load_helpers
 isc_activate_components
 source "$SCRIPT_DIR/installer/components.sh"
+
+# Always install the core CLI before any selected component runs. The shared
+# runtime invokes ISC_PREFLIGHT once, just before the first component, so the
+# core is guaranteed whenever the user installs anything at all.
+ISC_PREFLIGHT="ensure_core_cli"
 
 # main - run the full install, delegating component selection/execution to the
 # shared component_main runtime. Args: forwarded component flags ("$@").

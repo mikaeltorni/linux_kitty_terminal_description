@@ -99,16 +99,25 @@ bash install.sh --select a,b    # install exactly these component ids
 bash install.sh --list-components  # print: id<TAB>label<TAB>default
 ```
 
+The `kitty-terminal-description` CLI is the program's **core** and is always
+installed before any component runs — you cannot deselect it, so the core keeps
+working no matter what you choose. Everything else is an optional customization
+you can freely toggle.
+
 In the interactive menu, **space** toggles a component, `a`/`n` select all
-or none, and **Enter** installs the selection. Components:
+or none, and **Enter** installs the selection. Optional components:
 
 | Component id | Description | Default |
 |---|---|---|
-| `cli` | kitty-terminal-description CLI | on |
 | `env_file` | OpenRouter API key env file | on |
 | `kitty_remote_control` | Enable Kitty remote control | on |
 | `claude_hook` | Claude Code UserPromptSubmit hook | on |
 | `codex_hook` | Codex prompt-title hook (via Agent Command Center tracker) | on |
+
+Runtime behaviour is further tunable through environment variables read by the
+CLI: `OPENROUTER_SUMMARY_MODEL`, `OPENROUTER_SUMMARY_TIMEOUT`,
+`OPENROUTER_SUMMARY_CACHE_TTL`, `OPENROUTER_SUMMARY_CACHE_DIR`, and
+`OPENROUTER_ENV_FILE`.
 
 
 ## Disclaimer

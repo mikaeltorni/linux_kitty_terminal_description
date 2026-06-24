@@ -46,3 +46,24 @@ def test_installer_reports_idempotent_component_actions():
     assert "Installed kitty-terminal-description CLI" in source
     assert "OpenRouter env file already exists" in source
     assert "Kitty remote control already enabled" in source
+
+
+def test_core_cli_is_installed_unconditionally_via_preflight():
+    """The CLI core must install regardless of which optional components run."""
+    source = (ROOT / "scripts" / "install_standalone.sh").read_text(encoding="utf-8")
+
+    # ensure_core_cli is wired as the component preflight, so it runs before any
+    # selected component — the core works no matter what the user selects.
+    assert "ensure_core_cli()" in source
+    assert 'ISC_PREFLIGHT="ensure_core_cli"' in source
+    assert "install_cli" in source
+
+
+def test_cli_is_not_an_optional_toggle():
+    """The core CLI must not appear as a deselectable component."""
+    manifest = (ROOT / "installer" / "components.sh").read_text(encoding="utf-8")
+
+    # Optional, freely-togglable customizations only — no "cli|...|install_cli".
+    assert "install_cli" not in manifest
+    for required in ("env_file", "kitty_remote_control", "claude_hook", "codex_hook"):
+        assert required in manifest
