@@ -122,6 +122,97 @@ ensure_core_cli() {
   install_cli
 }
 
+###############################################################################
+# Detection and uninstall (component lifecycle)
+###############################################################################
+
+# detect_env_file - true when the OpenRouter env file has been installed.
+detect_env_file() {
+  [ -f "$TARGET_HOME/.config/linux-kitty-terminal-description/openrouter.env" ]
+}
+
+# detect_kitty_remote_control - true when kitty.conf enables remote control.
+detect_kitty_remote_control() {
+  local f="$TARGET_HOME/.config/kitty/kitty.conf"
+  [ -f "$f" ] && grep -Eq '^[[:space:]]*allow_remote_control[[:space:]]+yes' "$f"
+}
+
+# detect_claude_hook - true when the Claude settings reference our hook command.
+detect_claude_hook() {
+  local f="$TARGET_HOME/.claude/settings.json"
+  [ -f "$f" ] && grep -q 'kitty-terminal-description claude-hook' "$f"
+}
+
+# uninstall_env_file - remove the installed OpenRouter env file and its config dir.
+uninstall_env_file() {
+  local config_dir="$TARGET_HOME/.config/linux-kitty-terminal-description"
+  msg "Removing OpenRouter env file in $config_dir"
+  run_as_target rm -f "$config_dir/openrouter.env"
+  run_as_target rmdir "$config_dir" 2>/dev/null || true
+}
+
+# uninstall_kitty_remote_control - drop the allow_remote_control line (and the
+# preceding marker comment) this installer appended to kitty.conf.
+uninstall_kitty_remote_control() {
+  local f="$TARGET_HOME/.config/kitty/kitty.conf"
+  [ -f "$f" ] || return 0
+  msg "Disabling Kitty remote control in $f"
+  run_as_target python3 - "$f" <<'PY'
+import sys, io
+path = sys.argv[1]
+with io.open(path, encoding="utf-8") as fh:
+    lines = fh.readlines()
+out, skip_next_blank = [], False
+marker = "linux_kitty_terminal_description to keep prompt titles"
+kept = []
+for ln in lines:
+    if "allow_remote_control" in ln and "yes" in ln:
+        continue
+    if marker in ln:
+        continue
+    kept.append(ln)
+# collapse the trailing blank line left by the removed block
+while len(kept) >= 2 and kept[-1].strip() == "" and kept[-2].strip() == "":
+    kept.pop()
+with io.open(path, "w", encoding="utf-8") as fh:
+    fh.writelines(kept)
+PY
+}
+
+# uninstall_claude_hook - remove our UserPromptSubmit hook from Claude settings.
+uninstall_claude_hook() {
+  local f="$TARGET_HOME/.claude/settings.json"
+  [ -f "$f" ] || return 0
+  msg "Removing Claude UserPromptSubmit kitty-title hook from $f"
+  run_as_target python3 - "$f" <<'PY'
+import json, sys
+path = sys.argv[1]
+try:
+    with open(path) as fh:
+        data = json.load(fh)
+except Exception:
+    sys.exit(0)
+hooks = data.get("hooks", {})
+ups = hooks.get("UserPromptSubmit")
+def keep(entry):
+    s = json.dumps(entry)
+    return "kitty-terminal-description claude-hook" not in s
+if isinstance(ups, list):
+    ups = [e for e in ups if keep(e)]
+    if ups:
+        hooks["UserPromptSubmit"] = ups
+    else:
+        hooks.pop("UserPromptSubmit", None)
+    if hooks:
+        data["hooks"] = hooks
+    else:
+        data.pop("hooks", None)
+    with open(path, "w") as fh:
+        json.dump(data, fh, indent=2)
+        fh.write("\n")
+PY
+}
+
 # Component selection runtime and this repository's component manifest.
 # Load the shared installer component framework. Its single source of truth is
 # the linux_installation_scripts_functions repository (cloned as a sibling by
@@ -155,7 +246,7 @@ main() {
 # Listing/help must print only their own output (the master installer parses
 # --list-components); bypass the surrounding messages for those.
 case "${1:-}" in
-  --list-components|--help|-h) component_main "$@"; exit $? ;;
+  --list-components|--detect|--help|-h|--uninstall|--uninstall=*) component_main "$@"; exit $? ;;
 esac
 
 main "$@"

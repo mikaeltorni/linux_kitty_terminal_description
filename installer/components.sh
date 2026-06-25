@@ -18,8 +18,8 @@ ISC_REPO_NAME="linux_kitty_terminal_description"
 ISC_REPO_LABEL="Kitty prompt-title summaries"
 
 ISC_COMPONENTS=(
-  "env_file|OpenRouter API key env file|on|install_env_file"
-  "kitty_remote_control|Enable Kitty remote control|on|configure_kitty_remote_control"
-  "claude_hook|Claude Code UserPromptSubmit hook|on|configure_claude_hook"
+  "env_file|OpenRouter API key env file|on|install_env_file|detect_env_file|uninstall_env_file"
+  "kitty_remote_control|Enable Kitty remote control|on|configure_kitty_remote_control|detect_kitty_remote_control|uninstall_kitty_remote_control"
+  "claude_hook|Claude Code UserPromptSubmit hook|on|configure_claude_hook|detect_claude_hook|uninstall_claude_hook"
   "codex_hook|Codex prompt-title hook (via Agent Command Center tracker)|on|configure_codex_hook"
 )
