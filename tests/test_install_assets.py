@@ -20,6 +20,27 @@ def test_installer_is_sudo_free_and_installs_cli():
     assert "apt-get" not in source
 
 
+def test_codex_hook_component_has_detect_function():
+    """codex_hook must declare a detect function so it can report installed.
+
+    The component creates no persistent artifact of its own (the prompt-title
+    summary runs at agent launch inside the ACC tracker) and the framework's
+    receipt fallback is unreliable across root/non-root runs, so without
+    detect_codex_hook the component could never converge on a clean machine."""
+    components = (ROOT / "installer" / "components.sh").read_text(encoding="utf-8")
+    installer = (ROOT / "scripts" / "install_standalone.sh").read_text(encoding="utf-8")
+
+    codex_line = next(
+        line for line in components.splitlines() if line.strip().startswith('"codex_hook|')
+    )
+    assert "detect_codex_hook" in codex_line
+    assert "detect_codex_hook()" in installer
+    # Detection mirrors configure_codex_hook: installed when Codex is present.
+    detect_body = installer.split("detect_codex_hook()", 1)[1].split("}", 1)[0]
+    assert ".codex" in detect_body
+    assert "command -v codex" in detect_body
+
+
 def test_installer_configures_claude_but_not_kilo():
     """Standalone setup should wire Claude and intentionally ignore Kilo."""
     source = (ROOT / "scripts" / "install_standalone.sh").read_text(encoding="utf-8")

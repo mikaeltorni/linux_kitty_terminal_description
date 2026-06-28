@@ -143,6 +143,16 @@ detect_claude_hook() {
   [ -f "$f" ] && grep -q 'kitty-terminal-description claude-hook' "$f"
 }
 
+# detect_codex_hook - true when Codex is present, mirroring configure_codex_hook.
+# The Codex prompt-title path has no persistent artifact of its own (the summary
+# call happens at agent launch inside the Agent Command Center tracker), so the
+# component is "installed" exactly when Codex is available for the tracker to
+# drive. Without a detect function this component could never report installed on
+# a clean machine, since the runtime has no receipt to fall back on.
+detect_codex_hook() {
+  [ -d "$TARGET_HOME/.codex" ] || run_as_target bash -lc 'command -v codex >/dev/null 2>&1'
+}
+
 # uninstall_env_file - remove the installed OpenRouter env file and its config dir.
 uninstall_env_file() {
   local config_dir="$TARGET_HOME/.config/linux-kitty-terminal-description"
