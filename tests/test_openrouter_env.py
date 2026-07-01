@@ -50,6 +50,26 @@ def test_copy_openrouter_key_skips_when_absent(tmp_path):
     assert not target.exists()
 
 
+def test_write_openrouter_key_stores_secret_without_logging_it(tmp_path, caplog):
+    """Direct key entry writes a private env file without emitting the key."""
+    mod = load_module()
+    target = tmp_path / "openrouter.env"
+    secret = "sk-or-v1-super-secret"
+
+    assert mod.write_openrouter_key(target, secret) is True
+
+    assert target.read_text(encoding="utf-8") == f"OPENROUTER_API_KEY={secret}\n"
+    assert oct(target.stat().st_mode & 0o777) == "0o600"
+    assert secret not in caplog.text
+
+
+def test_write_openrouter_key_rejects_newlines(tmp_path):
+    """A key cannot inject additional env-file entries."""
+    mod = load_module()
+
+    assert mod.write_openrouter_key(tmp_path / "openrouter.env", "secret\nOTHER=value") is False
+
+
 def test_installer_uses_overridable_source_env_and_key_only_copy():
     """The installer honors the consumer source-env override via key-only copy."""
     source = (ROOT / "scripts" / "install_standalone.sh").read_text(encoding="utf-8")
@@ -58,6 +78,8 @@ def test_installer_uses_overridable_source_env_and_key_only_copy():
     assert "openrouter_env.py" in source
     # The old whole-file copy (which would leak unrelated secrets) is gone.
     assert 'install -m 0600 "$source_env" "$target_env"' not in source
+    assert 'read -r -s -p "OpenRouter API key' in source
+    assert "set-key" in source
 
 
 def test_openrouter_env_uses_centralized_stderr_logging():

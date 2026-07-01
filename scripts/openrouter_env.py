@@ -9,6 +9,7 @@ else leaks into the Kitty config.
 
 Components:
   - copy_openrouter_key: Sync only OPENROUTER_API_KEY between env files.
+  - write_openrouter_key: Store a directly entered key without logging it.
   - main: ``copy-key SOURCE TARGET`` CLI used by scripts/install_standalone.sh.
 """
 
@@ -73,6 +74,31 @@ def copy_openrouter_key(source_env: Path, target_env: Path) -> bool:
     return True
 
 
+def write_openrouter_key(target_env: Path, key: str) -> bool:
+    """Store a directly entered OpenRouter key privately without logging it.
+
+    The key is deliberately not passed through the call-tracing decorator. A
+    newline is rejected so one input value cannot inject additional env rows.
+    """
+    if not key or "\n" in key or "\r" in key:
+        logger.warning("Refusing empty or multiline OPENROUTER_API_KEY input")
+        return False
+
+    lines = []
+    if target_env.exists():
+        lines = [
+            raw
+            for raw in target_env.read_text(encoding="utf-8").splitlines()
+            if _env_key(raw.strip()) != "OPENROUTER_API_KEY"
+        ]
+    lines.append(f"OPENROUTER_API_KEY={key}")
+    target_env.parent.mkdir(parents=True, exist_ok=True)
+    target_env.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    target_env.chmod(0o600)
+    logger.info("Stored directly entered OPENROUTER_API_KEY in %s", target_env)
+    return True
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Create the OpenRouter env CLI parser."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -80,6 +106,8 @@ def build_parser() -> argparse.ArgumentParser:
     copy_key = subcommands.add_parser("copy-key")
     copy_key.add_argument("source_env", type=Path)
     copy_key.add_argument("target_env", type=Path)
+    set_key = subcommands.add_parser("set-key")
+    set_key.add_argument("target_env", type=Path)
     return parser
 
 
@@ -88,6 +116,9 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "copy-key":
         copy_openrouter_key(args.source_env, args.target_env)
+    elif args.command == "set-key":
+        if not write_openrouter_key(args.target_env, sys.stdin.read().rstrip("\n")):
+            return 2
     return 0
 
 

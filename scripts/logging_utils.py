@@ -18,6 +18,8 @@ from typing import Any, Callable, TypeVar
 LOG_FORMAT = "%(asctime)s %(levelname)s [%(name)s] %(message)s"
 LOG_DATE_FORMAT = "%Y-%m-%dT%H:%M:%S"
 F = TypeVar("F", bound=Callable[..., Any])
+REDACTED = "[REDACTED]"
+SENSITIVE_NAMES = ("api_key", "apikey", "authorization", "credential", "password", "secret", "token")
 
 
 def _repo_root() -> Path:
@@ -69,6 +71,20 @@ def get_logger(name: str, log_file: str, *, stream: bool = False) -> logging.Log
     return logger
 
 
+def _redact(value: Any, name: str = "") -> Any:
+    """Return a log-safe representation of potentially sensitive data."""
+    normalized = name.lower().replace("-", "_")
+    if any(marker in normalized for marker in SENSITIVE_NAMES):
+        return REDACTED
+    if isinstance(value, dict):
+        return {key: _redact(item, str(key)) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_redact(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_redact(item) for item in value)
+    return value
+
+
 def log_call(logger: logging.Logger, level: int = logging.DEBUG) -> Callable[[F], F]:
     """Trace a function by logging bound arguments on entry and return on exit.
 
@@ -89,11 +105,11 @@ def log_call(logger: logging.Logger, level: int = logging.DEBUG) -> Callable[[F]
             bound = signature.bind(*args, **kwargs)
             bound.apply_defaults()
             rendered = ", ".join(
-                f"{name}={value!r}" for name, value in bound.arguments.items()
+                f"{name}={_redact(value, name)!r}" for name, value in bound.arguments.items()
             )
             logger.log(level, "ENTER %s(%s)", location, rendered)
             result = func(*args, **kwargs)
-            logger.log(level, "EXIT %s -> %r", location, result)
+            logger.log(level, "EXIT %s -> %r", location, _redact(result, func.__name__))
             return result
 
         return wrapper  # type: ignore[return-value]

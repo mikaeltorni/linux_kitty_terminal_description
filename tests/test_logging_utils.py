@@ -65,3 +65,26 @@ def test_log_call_records_arguments_and_return(monkeypatch, tmp_path):
     assert "EXIT test_logging_utils.py:test_log_call_records_arguments_and_return" in contents
     assert "-> 'a-z'" in contents
     logger.handlers.clear()
+
+
+def test_log_call_redacts_secret_arguments_and_returns(monkeypatch, tmp_path):
+    """Call tracing must never serialize API keys, tokens, or secret values."""
+    mod = load_module()
+    monkeypatch.setenv("KITTY_TERMINAL_DESCRIPTION_LOG_DIR", str(tmp_path / ".log"))
+    logger = logging.getLogger("test_secret_logger")
+    logger.handlers.clear()
+    logger = mod.get_logger("test_secret_logger", "trace.log")
+
+    @mod.log_call(logger)
+    def use_key(api_key: str, metadata: dict[str, str]) -> dict[str, str]:
+        return {"token": api_key, **metadata}
+
+    secret = "sk-or-v1-never-log-me"
+    use_key(secret, {"safe": "value", "secret": secret})
+    for handler in logger.handlers:
+        handler.flush()
+
+    contents = (tmp_path / ".log" / "trace.log").read_text(encoding="utf-8")
+    assert secret not in contents
+    assert "[REDACTED]" in contents
+    logger.handlers.clear()

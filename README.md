@@ -41,12 +41,12 @@ See the full cross-repository map in
 ```bash
 git clone https://github.com/mikaeltorni/linux_kitty_terminal_description.git
 cd linux_kitty_terminal_description
-printf 'OPENROUTER_API_KEY=...\n' > .env
 bash install.sh
 ```
 
-The installer is sudo-free. It installs `kitty-terminal-description` to
-`~/.local/bin`, copies `.env` to
+The installer is sudo-free. If no key exists in `.env`, it securely prompts for
+the OpenRouter API key with hidden input; the key value is never logged. It
+installs `kitty-terminal-description` to `~/.local/bin`, copies the key to
 `~/.config/linux-kitty-terminal-description/openrouter.env` with mode `0600`,
 enables Kitty remote control if `~/.config/kitty/kitty.conf` exists, and wires a
 Claude `UserPromptSubmit` hook when `~/.claude` or `claude` exists.
@@ -109,7 +109,7 @@ or none, and **Enter** installs the selection. Optional components:
 
 | Component id | Description | Default |
 |---|---|---|
-| `env_file` | OpenRouter API key env file | on |
+| `env_file` | Configure OpenRouter API key | on |
 | `kitty_remote_control` | Enable Kitty remote control | on |
 | `claude_hook` | Claude Code UserPromptSubmit hook | on |
 | `codex_hook` | Codex prompt-title hook (via Agent Command Center tracker) | on |

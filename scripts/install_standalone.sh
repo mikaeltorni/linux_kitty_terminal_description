@@ -22,7 +22,8 @@ DISPLAY_VAL="${DISPLAY:-:0}"
 # component. No vendored copy here.
 
 # install_env_file - copy only OPENROUTER_API_KEY from the source env into the
-# user's config dir (mode 0600), or create an empty placeholder. The source
+# user's config dir (mode 0600), securely prompt for one when interactive, or
+# create an empty placeholder when unattended. The source
 # defaults to this repository's own .env but can be overridden with
 # KITTY_TERMINAL_DESCRIPTION_SOURCE_ENV so a consumer (e.g. Agent Command Center)
 # can hand over its .env without leaking unrelated secrets. Non-destructive and
@@ -36,7 +37,23 @@ install_env_file() {
   if [ -f "$source_env" ] && grep -Eq '^[[:space:]]*(export[[:space:]]+)?OPENROUTER_API_KEY=' "$source_env"; then
     run_as_target python3 "$SCRIPT_DIR/scripts/openrouter_env.py" copy-key "$source_env" "$target_env"
     msg "Installed OpenRouter key at $target_env"
-  elif [ ! -f "$target_env" ]; then
+  elif [ -f "$target_env" ] && grep -Eq '^[[:space:]]*(export[[:space:]]+)?OPENROUTER_API_KEY=.+$' "$target_env"; then
+    msg "OpenRouter key is already configured at $target_env; leaving it unchanged"
+    return 0
+  elif [ -t 0 ]; then
+    local openrouter_key=""
+    read -r -s -p "OpenRouter API key (leave blank to configure later): " openrouter_key
+    printf '\n' >&2
+    if [ -n "$openrouter_key" ]; then
+      printf '%s' "$openrouter_key" | run_as_target python3 "$SCRIPT_DIR/scripts/openrouter_env.py" set-key "$target_env"
+      msg "Installed OpenRouter key at $target_env"
+      unset openrouter_key
+      return 0
+    fi
+    unset openrouter_key
+  fi
+
+  if [ ! -f "$target_env" ]; then
     run_as_target touch "$target_env"
     run_as_target chmod 0600 "$target_env"
     msg "Created empty env file at $target_env"
