@@ -273,7 +273,7 @@ main() {
 # Listing/help must print only their own output (the master installer parses
 # --list-components); bypass the surrounding messages for those.
 case "${1:-}" in
-  --list-components|--detect|--help|-h|--uninstall|--uninstall=*) component_main "$@"; exit $? ;;
+  --list-components|--export-selection|--detect|--help|-h|--uninstall|--uninstall=*) component_main "$@"; exit $? ;;
 esac
 
 main "$@"
