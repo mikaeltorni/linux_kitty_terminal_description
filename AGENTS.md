@@ -6,16 +6,16 @@ checkout. Every runtime dependency, wrapper, hook, and default the feature needs
 must be represented in the installer, and the tool must still function when the
 OpenRouter key or network is unavailable by falling back to the raw prompt.
 
-# Ownership: OpenRouter summarization is single-sourced here
+# Ownership: OpenRouter prompt and commit generation is single-sourced here
 
 This repository is the **single source of truth** for OpenRouter prompt
-summarization across the desktop setup, exposed through the
-`kitty-terminal-description` CLI. The summarizer used to be duplicated inside
-`agent_command_center`; it lives here only. Do not re-add a second summarizer to
-Agent Command Center or any other consumer — its tracker shells out to this
-CLI for every prompt-title and finish-label summary and supplies the
-`OPENROUTER_API_KEY`. When you change summarization behavior, model choice, or
-title/context formatting, make the change here.
+summarization and validated Qwen conventional-commit subject generation across
+the desktop setup, exposed through the `kitty-terminal-description` CLI. The
+summarizer used to be duplicated inside `agent_command_center`; it lives here
+only. Do not re-add a second OpenRouter text client to Agent Command Center,
+Phrase Automation, or another consumer — they shell out to this CLI and reuse
+its `OPENROUTER_API_KEY` lookup. When you change prompt/commit generation,
+model choice, or title/context formatting, make the change here.
 
 # Repository Independence
 

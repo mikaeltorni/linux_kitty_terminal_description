@@ -61,8 +61,15 @@ that tracker path.
 ```bash
 kitty-terminal-description describe --prompt "fix the flaky test" --project-path "$PWD"
 kitty-terminal-description title --prompt "fix the flaky test" --project-path "$PWD"
+git diff HEAD | kitty-terminal-description commit-message --project-path "$PWD"
 kitty-terminal-description claude-hook < claude-hook-payload.json
 ```
+
+`commit-message` uses the same private OpenRouter key lookup as title summaries
+and defaults to `qwen/qwen3.5-flash-02-23`. It reads a unified diff from stdin,
+sends it to OpenRouter, and prints exactly one validated Conventional Commits
+subject. Missing credentials, provider errors, empty diffs, and invalid model
+output return a non-zero status and print no commit subject.
 
 Environment is read in this order:
 
@@ -117,7 +124,8 @@ or none, and **Enter** installs the selection. Optional components:
 Runtime behaviour is further tunable through environment variables read by the
 CLI: `OPENROUTER_SUMMARY_MODEL`, `OPENROUTER_SUMMARY_TIMEOUT`,
 `OPENROUTER_SUMMARY_CACHE_TTL`, `OPENROUTER_SUMMARY_CACHE_DIR`, and
-`OPENROUTER_ENV_FILE`.
+`OPENROUTER_ENV_FILE`. `OPENROUTER_COMMIT_MODEL` optionally overrides the Qwen
+model for commit subjects without changing title summaries.
 
 
 ## Detect, reconfigure, and uninstall
