@@ -47,6 +47,17 @@ SYSTEM_PROMPT = (
     "two to five words. Output only the label in plain words. No punctuation, "
     "no quotes, no trailing period."
 )
+COMMIT_SYSTEM_PROMPT = (
+    "You write one Conventional Commits subject for the supplied Git diff. "
+    "Output exactly one line using type(scope): imperative summary. Allowed "
+    "types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, "
+    "revert. Use a short lowercase scope when useful. Do not add markdown, a "
+    "body, quotes, reasoning, or a trailing period. Keep it at most 100 characters."
+)
+_CONVENTIONAL_SUBJECT_RE = re.compile(
+    r"^(?:feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)"
+    r"(?:\([a-zA-Z0-9._/-]+\))?!?: .{1,100}$"
+)
 
 STATUS_OK = "ok"
 STATUS_RATE_LIMITED = "rate_limited"
@@ -342,6 +353,71 @@ def _classify_http_error(code: int, body: str) -> str:
     return STATUS_ERROR
 
 
+def _request_openrouter_content(
+    messages: list[dict[str, str]],
+    *,
+    model: str,
+    key: str | None,
+    max_tokens: int,
+    event: str,
+) -> SummaryResult:
+    """Request one non-reasoning OpenRouter completion through shared plumbing.
+
+    Args:
+        messages: Ordered chat-completion messages.
+        model: Exact OpenRouter model id.
+        key: Optional API-key override; normal env-file lookup is used otherwise.
+        max_tokens: Maximum generated tokens.
+        event: Non-sensitive operation label used in diagnostics.
+
+    Returns:
+        SummaryResult: Raw model content in ``label`` on success and a
+        classified, non-raising status on every boundary failure.
+    """
+    resolved_key = (key or "").strip() or api_key()
+    if not resolved_key:
+        logger.warning("%s missing OPENROUTER_API_KEY", event)
+        return SummaryResult(STATUS_NO_KEY, "", "no OPENROUTER_API_KEY")
+    payload = {
+        "model": model,
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": 0.1,
+        "reasoning": {"enabled": False},
+    }
+    data = json.dumps(payload).encode("utf-8")
+    req = request.Request(OPENROUTER_ENDPOINT, data=data, method="POST")
+    req.add_header("Authorization", f"Bearer {resolved_key}")
+    req.add_header("Content-Type", "application/json")
+    req.add_header("HTTP-Referer", HTTP_REFERER)
+    req.add_header("X-Title", X_TITLE)
+    logger.info("%s requesting model=%s", event, model)
+    try:
+        with request.urlopen(req, timeout=request_timeout()) as resp:
+            body = resp.read().decode("utf-8", "replace")
+    except error.HTTPError as exc:
+        try:
+            err_body = exc.read().decode("utf-8", "replace")
+        except (OSError, ValueError):
+            err_body = ""
+        status = _classify_http_error(exc.code, err_body)
+        logger.warning("%s http error code=%s status=%s", event, exc.code, status)
+        return SummaryResult(status, "", f"HTTP {exc.code}: {err_body[:200]}")
+    except (error.URLError, TimeoutError, OSError) as exc:
+        logger.warning("%s request failed error=%s", event, exc)
+        return SummaryResult(STATUS_ERROR, "", f"request failed: {exc}")
+    try:
+        parsed = json.loads(body)
+        content = parsed["choices"][0]["message"]["content"]
+    except (ValueError, KeyError, IndexError, TypeError) as exc:
+        logger.warning("%s bad response error=%s", event, exc)
+        return SummaryResult(STATUS_ERROR, "", f"bad response: {exc}")
+    if not isinstance(content, str) or not content.strip():
+        logger.warning("%s produced empty content model=%s", event, model)
+        return SummaryResult(STATUS_ERROR, "", "empty response")
+    return SummaryResult(STATUS_OK, content, "")
+
+
 def summarize_prompt(prompt: str, *, model: str | None = None, key: str | None = None) -> SummaryResult:
     """Compress a prompt into a short OpenRouter feature label.
 
@@ -367,58 +443,93 @@ def summarize_prompt(prompt: str, *, model: str | None = None, key: str | None =
     if cached_label:
         logger.info("summarize_prompt cache hit model=%s", resolved_model)
         return SummaryResult(STATUS_OK, cached_label, "cache")
-    resolved_key = (key or "").strip() or api_key()
-    if not resolved_key:
-        logger.warning("summarize_prompt missing OPENROUTER_API_KEY")
-        return SummaryResult(STATUS_NO_KEY, "", "no OPENROUTER_API_KEY")
-
-    payload = {
-        "model": resolved_model,
-        "messages": [
+    generated = _request_openrouter_content(
+        [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": cleaned_prompt},
         ],
-        "max_tokens": 40,
-        "temperature": 0.1,
-        "reasoning": {"enabled": False},
-    }
-    data = json.dumps(payload).encode("utf-8")
-    req = request.Request(OPENROUTER_ENDPOINT, data=data, method="POST")
-    req.add_header("Authorization", f"Bearer {resolved_key}")
-    req.add_header("Content-Type", "application/json")
-    req.add_header("HTTP-Referer", HTTP_REFERER)
-    req.add_header("X-Title", X_TITLE)
-
-    logger.info("summarize_prompt requesting model=%s", resolved_model)
-    try:
-        with request.urlopen(req, timeout=request_timeout()) as resp:
-            body = resp.read().decode("utf-8", "replace")
-    except error.HTTPError as exc:
-        try:
-            err_body = exc.read().decode("utf-8", "replace")
-        except (OSError, ValueError):
-            err_body = ""
-        status = _classify_http_error(exc.code, err_body)
-        logger.warning("summarize_prompt http error code=%s status=%s", exc.code, status)
-        return SummaryResult(status, "", f"HTTP {exc.code}: {err_body[:200]}")
-    except (error.URLError, TimeoutError, OSError) as exc:
-        logger.warning("summarize_prompt request failed error=%s", exc)
-        return SummaryResult(STATUS_ERROR, "", f"request failed: {exc}")
-
-    try:
-        parsed = json.loads(body)
-        content = parsed["choices"][0]["message"]["content"]
-    except (ValueError, KeyError, IndexError, TypeError) as exc:
-        logger.warning("summarize_prompt bad response error=%s", exc)
-        return SummaryResult(STATUS_ERROR, "", f"bad response: {exc}")
-
-    label = clean_label(content or "")
+        model=resolved_model,
+        key=key,
+        max_tokens=40,
+        event="summarize_prompt",
+    )
+    if generated.status != STATUS_OK:
+        return generated
+    label = clean_label(generated.label)
     if not label:
         logger.warning("summarize_prompt produced empty label model=%s", resolved_model)
         return SummaryResult(STATUS_ERROR, "", "empty label")
     write_cached_label(resolved_model, cleaned_prompt, label)
     logger.info("summarize_prompt ok model=%s", resolved_model)
     return SummaryResult(STATUS_OK, label, "")
+
+
+def clean_commit_subject(text: str) -> str:
+    """Return one valid Conventional Commits subject or an empty string.
+
+    Args:
+        text: Raw model response, potentially containing reasoning or extra lines.
+    """
+    if not text:
+        return ""
+    cleaned = re.sub(r"<think>.*?</think>", " ", text, flags=re.DOTALL | re.IGNORECASE)
+    cleaned = re.sub(r"<think>.*$", " ", cleaned, flags=re.DOTALL | re.IGNORECASE)
+    first = cleaned.strip().splitlines()[0].strip().strip('"').strip("'").strip("`")
+    first = first.removesuffix(".")
+    if not _CONVENTIONAL_SUBJECT_RE.fullmatch(first):
+        return ""
+    return first
+
+
+def generate_commit_message(
+    diff: str,
+    *,
+    project_path: str = "",
+    model: str | None = None,
+    key: str | None = None,
+) -> SummaryResult:
+    """Generate one Qwen-backed conventional subject for a Git diff.
+
+    The first 120,000 characters are sent because very large or generated
+    worktrees can otherwise exceed provider request limits. The user-selected
+    diff is the only repository content sent to OpenRouter.
+
+    Args:
+        diff: Unified Git diff, including synthetic untracked-file additions.
+        project_path: Display-only repository identity included in the prompt.
+        model: Optional model override; defaults to the same Qwen used for titles.
+        key: Optional API-key override.
+    """
+    cleaned_diff = (diff or "").strip()
+    if not cleaned_diff:
+        return SummaryResult(STATUS_SKIPPED, "", "empty diff")
+    resolved_model = (
+        model
+        or (os.environ.get("OPENROUTER_COMMIT_MODEL") or "").strip()
+        or DEFAULT_SUMMARY_MODEL
+    )
+    project = project_path or "(unknown repository)"
+    generated = _request_openrouter_content(
+        [
+            {"role": "system", "content": COMMIT_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": f"Repository: {project}\n\nGit diff:\n{cleaned_diff[:120_000]}",
+            },
+        ],
+        model=resolved_model,
+        key=key,
+        max_tokens=80,
+        event="generate_commit_message",
+    )
+    if generated.status != STATUS_OK:
+        return generated
+    subject = clean_commit_subject(generated.label)
+    if not subject:
+        logger.warning("generate_commit_message invalid subject model=%s", resolved_model)
+        return SummaryResult(STATUS_ERROR, "", "invalid conventional commit subject")
+    logger.info("generate_commit_message ok model=%s", resolved_model)
+    return SummaryResult(STATUS_OK, subject, "")
 
 
 def human_project_name(path: str) -> str:
@@ -779,6 +890,27 @@ def cmd_completion_message(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_commit_message(args: argparse.Namespace) -> int:
+    """Read a Git diff from stdin and print one Qwen-generated commit subject.
+
+    Args:
+        args: Parsed namespace containing ``project_path``.
+
+    Returns:
+        ``0`` on success and ``2`` when credentials, network, or validation fail.
+    """
+    result = generate_commit_message(
+        sys.stdin.read(),
+        project_path=args.project_path or "",
+    )
+    if result.status == STATUS_OK:
+        print(result.label)
+        return 0
+    detail = result.detail or result.status
+    print(detail, file=sys.stderr)
+    return 2
+
+
 def cmd_claude_hook(_args: argparse.Namespace) -> int:
     """Handle the ``claude-hook`` subcommand for ``UserPromptSubmit`` payloads.
 
@@ -818,8 +950,8 @@ def cmd_claude_hook(_args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     """Construct the argparse CLI with all subcommands.
 
-    Subcommands: ``describe``, ``title``, ``completion-message`` and
-    ``claude-hook``. The ``title`` parser also accepts ``--codex-home``,
+    Subcommands: ``describe``, ``title``, ``completion-message``,
+    ``commit-message`` and ``claude-hook``. The ``title`` parser also accepts ``--codex-home``,
     ``--kitty-listen-on`` and ``--kitty-pid`` for backward compatibility with
     external callers (Agent Command Center); they are intentionally accepted
     and ignored so passing them never errors.
@@ -853,6 +985,13 @@ def build_parser() -> argparse.ArgumentParser:
     completion.add_argument("--project-name", default="")
     completion.add_argument("--project-path", default="")
     completion.set_defaults(func=cmd_completion_message)
+
+    commit = sub.add_parser(
+        "commit-message",
+        help="read a Git diff from stdin and print a Qwen conventional subject",
+    )
+    commit.add_argument("--project-path", default="")
+    commit.set_defaults(func=cmd_commit_message)
 
     claude_hook = sub.add_parser("claude-hook", help="handle Claude UserPromptSubmit hook payloads")
     claude_hook.set_defaults(func=cmd_claude_hook)
