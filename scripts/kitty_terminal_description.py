@@ -601,11 +601,12 @@ def project_git_context(project_path: str | None = "") -> str:
 
     Returns:
         str: ``"<Project>"`` or ``"<Project> · <worktree>"`` when a Git
-        worktree name is available.
+        worktree name is available and differs from the project name (the
+        segment is omitted in a primary checkout, where they are identical).
     """
     label = human_project_name(project_path or "")
     git_summary = git_summary_for_project(project_path or "")
-    if not git_summary:
+    if not git_summary or human_project_name(git_summary) == label:
         return label
     return f"{label} · {git_summary}"
 

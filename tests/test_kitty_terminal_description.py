@@ -77,3 +77,28 @@ def test_claude_hook_sets_title_from_prompt(monkeypatch, tmp_path, capsys):
     assert mod.main(["claude-hook"]) == 0
     assert captured["title"] == "fix tests title"
     assert capsys.readouterr().out == ""
+
+
+def test_project_git_context_omits_duplicate_worktree(monkeypatch):
+    """A primary checkout (worktree name == project name) shows no worktree segment."""
+    mod = load_module()
+    monkeypatch.setattr(
+        mod, "git_summary_for_project", lambda project_path="": "phrase_automation"
+    )
+
+    assert mod.project_git_context("/repo/phrase_automation") == "Phrase automation"
+
+
+def test_project_git_context_shows_distinct_worktree(monkeypatch):
+    """A linked worktree keeps its name as the trailing title segment."""
+    mod = load_module()
+    monkeypatch.setattr(
+        mod,
+        "git_summary_for_project",
+        lambda project_path="": "phrase_automation-wt-fix-bug",
+    )
+
+    assert (
+        mod.project_git_context("/repo/phrase_automation")
+        == "Phrase automation · phrase_automation-wt-fix-bug"
+    )
