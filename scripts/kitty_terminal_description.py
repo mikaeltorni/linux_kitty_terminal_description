@@ -562,22 +562,22 @@ def normalize_task_description(task_description: str | None) -> str:
 
 
 def git_summary_for_project(project_path: str | None = "") -> str | None:
-    """Return a compact Git branch label for use in terminal titles.
+    """Return a compact Git worktree label for use in terminal titles.
 
     Args:
         project_path (str | None): Path to a working tree. Empty, ``"."`` or
             ``None`` short-circuit to ``None``.
 
     Returns:
-        str | None: The current branch name, ``"detached"`` for a detached
-        HEAD, or ``None`` when the path is not a usable Git repository.
+        str | None: The basename of the Git worktree root (the worktree
+        name), or ``None`` when the path is not a usable Git repository.
     """
     if not project_path or str(project_path).strip() in {"", "."}:
         return None
     cwd = str(Path(project_path).expanduser().resolve())
     try:
-        branch_result = subprocess.run(
-            ["git", "-C", cwd, "rev-parse", "--abbrev-ref", "HEAD"],
+        toplevel_result = subprocess.run(
+            ["git", "-C", cwd, "rev-parse", "--show-toplevel"],
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
@@ -587,10 +587,10 @@ def git_summary_for_project(project_path: str | None = "") -> str | None:
     except (OSError, subprocess.SubprocessError, ValueError) as exc:
         logger.debug("git_summary_for_project failed path=%s error=%s", project_path, exc)
         return None
-    branch = (branch_result.stdout or "").strip() if branch_result.returncode == 0 else ""
-    if not branch:
+    toplevel = (toplevel_result.stdout or "").strip() if toplevel_result.returncode == 0 else ""
+    if not toplevel:
         return None
-    return branch if branch != "HEAD" else "detached"
+    return Path(toplevel).name or None
 
 
 def project_git_context(project_path: str | None = "") -> str:
@@ -600,8 +600,8 @@ def project_git_context(project_path: str | None = "") -> str:
         project_path (str | None): Path to the active project.
 
     Returns:
-        str: ``"<Project>"`` or ``"<Project> · <branch>"`` when a branch is
-        available.
+        str: ``"<Project>"`` or ``"<Project> · <worktree>"`` when a Git
+        worktree name is available.
     """
     label = human_project_name(project_path or "")
     git_summary = git_summary_for_project(project_path or "")
