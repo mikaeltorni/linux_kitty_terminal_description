@@ -62,6 +62,7 @@ that tracker path.
 kitty-terminal-description describe --prompt "fix the flaky test" --project-path "$PWD"
 kitty-terminal-description title --prompt "fix the flaky test" --project-path "$PWD"
 git diff HEAD | kitty-terminal-description commit-message --project-path "$PWD"
+printf '%s' '{"system_prompt":"Return Markdown.","user_prompt":"Project context","model":"qwen/qwen3.5-flash-02-23","max_tokens":65536,"temperature":0}' | kitty-terminal-description generate-json
 kitty-terminal-description claude-hook < claude-hook-payload.json
 ```
 
@@ -70,6 +71,13 @@ and defaults to `qwen/qwen3.5-flash-02-23`. It reads a unified diff from stdin,
 sends it to OpenRouter, and prints exactly one validated Conventional Commits
 subject. Missing credentials, provider errors, empty diffs, and invalid model
 output return a non-zero status and print no commit subject.
+
+`generate-json` is the machine-readable generic generation boundary used by
+Phrase Automation project prompts. It accepts one JSON request on stdin and
+prints `{status,text,detail}` JSON on stdout. It does not truncate the supplied
+prompts; its default output ceiling is 65,536 tokens, temperature is zero, and
+`OPENROUTER_GENERATE_TIMEOUT` controls its long-request timeout (600 seconds by
+default). Provider failures are returned as structured statuses.
 
 Environment is read in this order:
 
@@ -124,7 +132,8 @@ or none, and **Enter** installs the selection. Optional components:
 Runtime behaviour is further tunable through environment variables read by the
 CLI: `OPENROUTER_SUMMARY_MODEL`, `OPENROUTER_SUMMARY_TIMEOUT`,
 `OPENROUTER_SUMMARY_CACHE_TTL`, `OPENROUTER_SUMMARY_CACHE_DIR`, and
-`OPENROUTER_ENV_FILE`. `OPENROUTER_COMMIT_MODEL` optionally overrides the Qwen
+`OPENROUTER_ENV_FILE`. `OPENROUTER_GENERATE_TIMEOUT` controls generic long-form
+requests. `OPENROUTER_COMMIT_MODEL` optionally overrides the Qwen
 model for commit subjects without changing title summaries.
 
 

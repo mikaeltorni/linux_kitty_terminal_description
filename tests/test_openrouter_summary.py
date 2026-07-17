@@ -217,6 +217,93 @@ def test_summary_model_default_and_override(monkeypatch):
     assert summ.summary_model() == "vendor/new-model"
 
 
+def test_generate_text_forwards_deterministic_maximum_request_settings(monkeypatch):
+    """Generic consumers can use Qwen Flash's full output setting at zero temperature."""
+    captured: dict[str, object] = {}
+
+    def _capture(req, timeout=None):
+        captured["payload"] = json.loads(req.data.decode("utf-8"))
+        captured["timeout"] = timeout
+        payload = {"choices": [{"message": {"content": "# Updated prompt"}}]}
+        return _fake_urlopen_returning(payload)(req, timeout=timeout)
+
+    monkeypatch.setattr(summ.request, "urlopen", _capture)
+
+    result = summ.generate_text(
+        "Edit only material changes.",
+        "Complete Git context.",
+        model="qwen/qwen3.5-flash-02-23",
+        key="test-key",
+        max_tokens=65_536,
+        temperature=0.0,
+    )
+
+    assert result == summ.SummaryResult(summ.STATUS_OK, "# Updated prompt", "")
+    assert captured["payload"] == {
+        "model": "qwen/qwen3.5-flash-02-23",
+        "messages": [
+            {"role": "system", "content": "Edit only material changes."},
+            {"role": "user", "content": "Complete Git context."},
+        ],
+        "max_tokens": 65_536,
+        "temperature": 0.0,
+        "reasoning": {"enabled": False},
+    }
+    assert captured["timeout"] == summ.generate_timeout()
+
+
+def test_generate_json_cli_reads_machine_request_and_prints_machine_result(
+    monkeypatch,
+    capsys,
+):
+    """The installed CLI keeps large prompts on stdin and JSON on stdout."""
+    calls: list[dict[str, object]] = []
+
+    def _generate(system_prompt, user_prompt, **kwargs):
+        calls.append(
+            {
+                "system_prompt": system_prompt,
+                "user_prompt": user_prompt,
+                **kwargs,
+            }
+        )
+        return summ.SummaryResult(summ.STATUS_OK, "# Final", "")
+
+    monkeypatch.setattr(summ, "generate_text", _generate)
+    monkeypatch.setattr(
+        summ.sys,
+        "stdin",
+        io.StringIO(
+            json.dumps(
+                {
+                    "system_prompt": "Initial prompt contract",
+                    "user_prompt": "All repository context",
+                    "model": "qwen/qwen3.5-flash-02-23",
+                    "max_tokens": 65_536,
+                    "temperature": 0.0,
+                }
+            )
+        ),
+    )
+
+    assert summ.main(["generate-json"]) == 0
+
+    assert calls == [
+        {
+            "system_prompt": "Initial prompt contract",
+            "user_prompt": "All repository context",
+            "model": "qwen/qwen3.5-flash-02-23",
+            "max_tokens": 65_536,
+            "temperature": 0.0,
+        }
+    ]
+    assert json.loads(capsys.readouterr().out) == {
+        "status": "ok",
+        "text": "# Final",
+        "detail": "",
+    }
+
+
 def test_cache_round_trips_label():
     """write_cached_label and read_cached_label should round-trip a fresh label."""
     summ.write_cached_label("model-a", "prompt text", "Prompt label")

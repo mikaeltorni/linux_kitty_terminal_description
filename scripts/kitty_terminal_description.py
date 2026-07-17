@@ -6,11 +6,12 @@ Components:
   - OpenRouter summary helpers for short prompt labels.
   - Project/Git context helpers for readable terminal titles.
   - Feature-label cache shared by title and completion-message callers.
-  - CLI subcommands: describe, title, completion-message, and claude-hook.
+  - CLI subcommands for titles, commit messages, hooks, and generic text generation.
 
 Usage:
   kitty-terminal-description describe --prompt "fix tests" --project-path "$PWD"
   kitty-terminal-description title --prompt "fix tests" --project-path "$PWD"
+  printf '%s' '{"system_prompt":"...","user_prompt":"..."}' | kitty-terminal-description generate-json
   kitty-terminal-description claude-hook < payload.json
 """
 
@@ -121,6 +122,23 @@ def request_timeout() -> float:
         return 8.0
     timeout = value if value > 0 else 8.0
     logger.debug("request_timeout resolved=%s", timeout)
+    return timeout
+
+
+def generate_timeout() -> float:
+    """Resolve the timeout for long generic text-generation requests.
+
+    Returns:
+        float: ``OPENROUTER_GENERATE_TIMEOUT`` when positive, otherwise 600.
+    """
+    raw = (os.environ.get("OPENROUTER_GENERATE_TIMEOUT") or "").strip()
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.debug("generate_timeout invalid=%r using default=600.0", raw)
+        return 600.0
+    timeout = value if value > 0 else 600.0
+    logger.debug("generate_timeout resolved=%s", timeout)
     return timeout
 
 
@@ -360,6 +378,8 @@ def _request_openrouter_content(
     key: str | None,
     max_tokens: int,
     event: str,
+    temperature: float = 0.1,
+    timeout: float | None = None,
 ) -> SummaryResult:
     """Request one non-reasoning OpenRouter completion through shared plumbing.
 
@@ -369,6 +389,8 @@ def _request_openrouter_content(
         key: Optional API-key override; normal env-file lookup is used otherwise.
         max_tokens: Maximum generated tokens.
         event: Non-sensitive operation label used in diagnostics.
+        temperature: Sampling temperature sent to OpenRouter.
+        timeout: Optional request timeout; summary timeout is the default.
 
     Returns:
         SummaryResult: Raw model content in ``label`` on success and a
@@ -382,7 +404,7 @@ def _request_openrouter_content(
         "model": model,
         "messages": messages,
         "max_tokens": max_tokens,
-        "temperature": 0.1,
+        "temperature": float(temperature),
         "reasoning": {"enabled": False},
     }
     data = json.dumps(payload).encode("utf-8")
@@ -393,7 +415,7 @@ def _request_openrouter_content(
     req.add_header("X-Title", X_TITLE)
     logger.info("%s requesting model=%s", event, model)
     try:
-        with request.urlopen(req, timeout=request_timeout()) as resp:
+        with request.urlopen(req, timeout=request_timeout() if timeout is None else timeout) as resp:
             body = resp.read().decode("utf-8", "replace")
     except error.HTTPError as exc:
         try:
@@ -416,6 +438,49 @@ def _request_openrouter_content(
         logger.warning("%s produced empty content model=%s", event, model)
         return SummaryResult(STATUS_ERROR, "", "empty response")
     return SummaryResult(STATUS_OK, content, "")
+
+
+def generate_text(
+    system_prompt: str,
+    user_prompt: str,
+    *,
+    model: str | None = None,
+    key: str | None = None,
+    max_tokens: int = 65_536,
+    temperature: float = 0.0,
+) -> SummaryResult:
+    """Generate arbitrary text through the shared OpenRouter transport.
+
+    Args:
+        system_prompt: Instruction message defining the response contract.
+        user_prompt: Complete user context; this helper does not truncate it.
+        model: Optional model id, defaulting to the shared Qwen Flash model.
+        key: Optional API key override.
+        max_tokens: Positive response-token ceiling.
+        temperature: Sampling temperature sent to OpenRouter.
+
+    Returns:
+        SummaryResult: Generated text is returned in ``label`` on success.
+    """
+    cleaned_system = (system_prompt or "").strip()
+    cleaned_user = (user_prompt or "").strip()
+    if not cleaned_system or not cleaned_user:
+        logger.warning("generate_text skipped empty prompt")
+        return SummaryResult(STATUS_SKIPPED, "", "empty prompt")
+    if int(max_tokens) <= 0:
+        return SummaryResult(STATUS_ERROR, "", "max_tokens must be positive")
+    return _request_openrouter_content(
+        [
+            {"role": "system", "content": cleaned_system},
+            {"role": "user", "content": cleaned_user},
+        ],
+        model=model or DEFAULT_SUMMARY_MODEL,
+        key=key,
+        max_tokens=int(max_tokens),
+        temperature=float(temperature),
+        timeout=generate_timeout(),
+        event="generate_text",
+    )
 
 
 def summarize_prompt(prompt: str, *, model: str | None = None, key: str | None = None) -> SummaryResult:
@@ -912,6 +977,41 @@ def cmd_commit_message(args: argparse.Namespace) -> int:
     return 2
 
 
+def cmd_generate_json(_args: argparse.Namespace) -> int:
+    """Read a generic generation request and print a structured JSON result.
+
+    The protocol always exits successfully so callers can classify provider
+    failures from the returned ``status`` without parsing stderr.
+
+    Args:
+        _args: Unused parsed namespace; the request is read from stdin.
+
+    Returns:
+        int: Always ``0`` after emitting one JSON object.
+    """
+    try:
+        payload = json.loads(sys.stdin.read() or "{}")
+        if not isinstance(payload, dict):
+            raise ValueError("request must be a JSON object")
+        result = generate_text(
+            str(payload.get("system_prompt") or ""),
+            str(payload.get("user_prompt") or ""),
+            model=str(payload.get("model") or "") or None,
+            max_tokens=int(payload.get("max_tokens", 65_536)),
+            temperature=float(payload.get("temperature", 0.0)),
+        )
+    except (TypeError, ValueError) as exc:
+        logger.warning("cmd_generate_json invalid request error=%s", exc)
+        result = SummaryResult(STATUS_ERROR, "", f"invalid request: {exc}")
+    print(
+        json.dumps(
+            {"status": result.status, "text": result.label, "detail": result.detail},
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
 def cmd_claude_hook(_args: argparse.Namespace) -> int:
     """Handle the ``claude-hook`` subcommand for ``UserPromptSubmit`` payloads.
 
@@ -952,7 +1052,7 @@ def build_parser() -> argparse.ArgumentParser:
     """Construct the argparse CLI with all subcommands.
 
     Subcommands: ``describe``, ``title``, ``completion-message``,
-    ``commit-message`` and ``claude-hook``. The ``title`` parser also accepts ``--codex-home``,
+    ``commit-message``, ``generate-json`` and ``claude-hook``. The ``title`` parser also accepts ``--codex-home``,
     ``--kitty-listen-on`` and ``--kitty-pid`` for backward compatibility with
     external callers (Agent Command Center); they are intentionally accepted
     and ignored so passing them never errors.
@@ -993,6 +1093,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     commit.add_argument("--project-path", default="")
     commit.set_defaults(func=cmd_commit_message)
+
+    generate = sub.add_parser(
+        "generate-json",
+        help="read a JSON generation request from stdin and print JSON",
+    )
+    generate.set_defaults(func=cmd_generate_json)
 
     claude_hook = sub.add_parser("claude-hook", help="handle Claude UserPromptSubmit hook payloads")
     claude_hook.set_defaults(func=cmd_claude_hook)
