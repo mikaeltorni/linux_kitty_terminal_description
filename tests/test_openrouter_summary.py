@@ -212,6 +212,7 @@ def test_summarize_prompt_network_error_is_generic_error(monkeypatch):
 def test_summary_model_default_and_override(monkeypatch):
     """The model id should default to the constant and honor the env override."""
     monkeypatch.delenv("OPENROUTER_SUMMARY_MODEL", raising=False)
+    assert summ.DEFAULT_SUMMARY_MODEL == "qwen/qwen3.7-flash"
     assert summ.summary_model() == summ.DEFAULT_SUMMARY_MODEL
     monkeypatch.setenv("OPENROUTER_SUMMARY_MODEL", "vendor/new-model")
     assert summ.summary_model() == "vendor/new-model"
@@ -232,7 +233,7 @@ def test_generate_text_forwards_deterministic_maximum_request_settings(monkeypat
     result = summ.generate_text(
         "Edit only material changes.",
         "Complete Git context.",
-        model="qwen/qwen3.5-flash-02-23",
+        model=summ.DEFAULT_SUMMARY_MODEL,
         key="test-key",
         max_tokens=65_536,
         temperature=0.0,
@@ -240,7 +241,7 @@ def test_generate_text_forwards_deterministic_maximum_request_settings(monkeypat
 
     assert result == summ.SummaryResult(summ.STATUS_OK, "# Updated prompt", "")
     assert captured["payload"] == {
-        "model": "qwen/qwen3.5-flash-02-23",
+        "model": summ.DEFAULT_SUMMARY_MODEL,
         "messages": [
             {"role": "system", "content": "Edit only material changes."},
             {"role": "user", "content": "Complete Git context."},
@@ -278,7 +279,7 @@ def test_generate_json_cli_reads_machine_request_and_prints_machine_result(
                 {
                     "system_prompt": "Initial prompt contract",
                     "user_prompt": "All repository context",
-                    "model": "qwen/qwen3.5-flash-02-23",
+                    "model": summ.DEFAULT_SUMMARY_MODEL,
                     "max_tokens": 65_536,
                     "temperature": 0.0,
                 }
@@ -292,7 +293,7 @@ def test_generate_json_cli_reads_machine_request_and_prints_machine_result(
         {
             "system_prompt": "Initial prompt contract",
             "user_prompt": "All repository context",
-            "model": "qwen/qwen3.5-flash-02-23",
+            "model": summ.DEFAULT_SUMMARY_MODEL,
             "max_tokens": 65_536,
             "temperature": 0.0,
         }

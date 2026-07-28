@@ -37,7 +37,7 @@ if str(SCRIPT_DIR) not in sys.path:
 from logging_utils import get_logger
 
 
-DEFAULT_SUMMARY_MODEL = "qwen/qwen3.5-flash-02-23"
+DEFAULT_SUMMARY_MODEL = "qwen/qwen3.7-flash"
 DEFAULT_SUMMARY_CACHE_TTL_SECONDS = 6 * 60 * 60
 FEATURE_LABEL_TTL_SECONDS = 2 * 60 * 60
 OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
