@@ -212,7 +212,7 @@ def test_summarize_prompt_network_error_is_generic_error(monkeypatch):
 def test_summary_model_default_and_override(monkeypatch):
     """The model id should default to the constant and honor the env override."""
     monkeypatch.delenv("OPENROUTER_SUMMARY_MODEL", raising=False)
-    assert summ.DEFAULT_SUMMARY_MODEL == "qwen/qwen3.7-flash"
+    assert summ.DEFAULT_SUMMARY_MODEL == "google/gemini-2.5-flash-lite"
     assert summ.summary_model() == summ.DEFAULT_SUMMARY_MODEL
     monkeypatch.setenv("OPENROUTER_SUMMARY_MODEL", "vendor/new-model")
     assert summ.summary_model() == "vendor/new-model"

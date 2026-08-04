@@ -62,12 +62,12 @@ that tracker path.
 kitty-terminal-description describe --prompt "fix the flaky test" --project-path "$PWD"
 kitty-terminal-description title --prompt "fix the flaky test" --project-path "$PWD"
 git diff HEAD | kitty-terminal-description commit-message --project-path "$PWD"
-printf '%s' '{"system_prompt":"Return Markdown.","user_prompt":"Project context","model":"qwen/qwen3.7-flash","max_tokens":65536,"temperature":0}' | kitty-terminal-description generate-json
+printf '%s' '{"system_prompt":"Return Markdown.","user_prompt":"Project context","model":"google/gemini-2.5-flash-lite","max_tokens":65536,"temperature":0}' | kitty-terminal-description generate-json
 kitty-terminal-description claude-hook < claude-hook-payload.json
 ```
 
 `commit-message` uses the same private OpenRouter key lookup as title summaries
-and defaults to `qwen/qwen3.7-flash`. It reads a unified diff from stdin,
+and defaults to `google/gemini-2.5-flash-lite`. It reads a unified diff from stdin,
 sends it to OpenRouter, and prints exactly one validated Conventional Commits
 subject. Missing credentials, provider errors, empty diffs, and invalid model
 output return a non-zero status and print no commit subject.
