@@ -218,6 +218,17 @@ def test_summary_model_default_and_override(monkeypatch):
     assert summ.summary_model() == "vendor/new-model"
 
 
+def test_clean_title_prompt_strips_raw_and_goal_markers():
+    """Title/summary surfaces must drop harness /goal and legacy RAW: markers."""
+    assert summ.clean_title_prompt("  /goal fix console title  ") == "fix console title"
+    assert summ.clean_title_prompt("RAW:/goal fix console title") == "fix console title"
+    assert summ.clean_title_prompt("RAW:plain prompt") == "plain prompt"
+    assert summ.clean_title_prompt("/goal") == ""
+    assert summ.clean_title_prompt("/goalie rename") == "/goalie rename"
+    assert summ.clean_title_prompt(None) == ""
+    assert summ.normalize_task_description("/goal do the thing") == "do the thing"
+
+
 def test_generate_text_forwards_deterministic_maximum_request_settings(monkeypatch):
     """Generic consumers can use Qwen Flash's full output setting at zero temperature."""
     captured: dict[str, object] = {}
