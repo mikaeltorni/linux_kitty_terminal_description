@@ -54,6 +54,23 @@ def test_describe_prompt_falls_back_without_key(monkeypatch, tmp_path):
     assert result["title"] == "fix failing tests · Example project · main"
 
 
+def test_describe_prompt_fallback_strips_goal_prefix(monkeypatch, tmp_path):
+    """Fallback titles must not show harness /goal when summarization is unavailable."""
+    mod = load_module()
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setattr(mod, "env_file_candidates", lambda: [tmp_path / "missing.env"])
+    monkeypatch.setattr(mod, "read_cached_label", lambda model, prompt: None)
+    monkeypatch.setattr(mod, "git_summary_for_project", lambda project_path="": None)
+
+    result = mod.describe_prompt("/goal fix console title", "/repo/example_project")
+
+    assert result["status"] == mod.STATUS_NO_KEY
+    assert result["label"] == ""
+    assert not result["title"].startswith("RAW:")
+    assert not result["title"].startswith("/goal")
+    assert result["title"].startswith("fix console title")
+
+
 def test_completion_message_reads_cached_feature(monkeypatch, tmp_path):
     """Completion text should use the feature label stored by title generation."""
     mod = load_module()

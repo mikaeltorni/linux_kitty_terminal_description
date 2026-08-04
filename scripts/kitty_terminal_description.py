@@ -616,16 +616,42 @@ def human_project_name(path: str) -> str:
     return words[:1].upper() + words[1:] if words else "Project"
 
 
+def clean_title_prompt(prompt: str | None) -> str:
+    """Normalize prompt text for user-visible titles and summary fallbacks.
+
+    Collapses whitespace, strips a leading ``RAW:`` marker (legacy session
+    fallbacks), and strips one leading harness ``/goal`` token. The agent
+    launch prompt itself must keep ``/goal`` — only call this for titles,
+    OpenRouter summary input, and similar display/summary surfaces.
+
+    Args:
+        prompt (str | None): Raw task text, possibly ``None``.
+
+    Returns:
+        str: Cleaned prompt text, or an empty string for non-strings / empty input.
+    """
+    if not isinstance(prompt, str):
+        return ""
+    text = " ".join(prompt.split())
+    if text.startswith("RAW:"):
+        text = text[4:].lstrip()
+        logger.debug("clean_title_prompt stripped RAW: marker")
+    if text == "/goal" or text.startswith("/goal "):
+        text = text[5:].lstrip()
+        logger.debug("clean_title_prompt stripped leading /goal")
+    return text
+
+
 def normalize_task_description(task_description: str | None) -> str:
-    """Collapse whitespace in a task description.
+    """Collapse whitespace and strip harness markers from a task description.
 
     Args:
         task_description (str | None): Raw task text, possibly ``None``.
 
     Returns:
-        str: Whitespace-normalized text, or an empty string for non-strings.
+        str: Whitespace-normalized title-safe text, or empty for non-strings.
     """
-    return " ".join((task_description or "").split()) if isinstance(task_description, str) else ""
+    return clean_title_prompt(task_description)
 
 
 def git_summary_for_project(project_path: str | None = "") -> str | None:
