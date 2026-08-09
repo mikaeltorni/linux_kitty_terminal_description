@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""Structural tests for installer assets."""
+"""Structural and blank-install tests for installer assets."""
 
+import os
+import subprocess
 from pathlib import Path
 
 
@@ -69,15 +71,47 @@ def test_installer_reports_idempotent_component_actions():
     assert "Kitty remote control already enabled" in source
 
 
-def test_core_cli_is_installed_unconditionally_via_preflight():
-    """The CLI core must install regardless of which optional components run."""
+def test_core_cli_is_installed_unconditionally_by_main():
+    """The CLI core must install independently of the component selection.
+
+    ISC_PREFLIGHT alone is not enough: the shared runtime only fires the
+    preflight in front of the *first selected* component, so a blank selection
+    would skip it. main() therefore calls ensure_core_cli itself.
+    """
     source = (ROOT / "scripts" / "install_standalone.sh").read_text(encoding="utf-8")
 
-    # ensure_core_cli is wired as the component preflight, so it runs before any
-    # selected component — the core works no matter what the user selects.
     assert "ensure_core_cli()" in source
-    assert 'ISC_PREFLIGHT="ensure_core_cli"' in source
-    assert "install_cli" in source
+    main_body = source.split("\nmain() {", 1)[1].split("\n}", 1)[0]
+    assert "ensure_core_cli" in main_body
+    assert main_body.index("ensure_core_cli") < main_body.index("component_main")
+
+
+def test_blank_selection_still_installs_the_core_cli(tmp_path):
+    """End-to-end: `--select ''` installs no component but yields a working core."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    env = {
+        **os.environ,
+        "TARGET_HOME": str(fake_home),
+        "XDG_STATE_HOME": str(tmp_path / "state"),
+        "ISC_HOTKEY_INTERACTIVE": "0",
+    }
+    result = subprocess.run(
+        ["bash", str(ROOT / "install.sh"), "--select", ""],
+        capture_output=True,
+        text=True,
+        env=env,
+        stdin=subprocess.DEVNULL,
+        timeout=300,
+    )
+
+    assert result.returncode == 0, result.stderr
+    cli = fake_home / ".local" / "bin" / "kitty-terminal-description"
+    assert cli.is_file(), result.stderr
+    assert os.access(cli, os.X_OK)
+    assert (fake_home / ".local" / "bin" / "logging_utils.py").is_file()
+    # Nothing optional may be installed by a blank selection.
+    assert not (fake_home / ".config" / "linux-kitty-terminal-description").exists()
 
 
 def test_cli_is_not_an_optional_toggle():

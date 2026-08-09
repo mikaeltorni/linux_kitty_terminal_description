@@ -12,7 +12,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET_USER="${SUDO_USER:-$USER}"
 TARGET_UID="$(id -u "$TARGET_USER")"
-TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
+# TARGET_HOME defaults to the target user's real home; an explicit TARGET_HOME
+# in the environment wins so tests (and sandboxed dry runs) can install into a
+# throwaway directory. Same override contract as claude_code_status_bar.
+TARGET_HOME="${TARGET_HOME:-$(getent passwd "$TARGET_USER" | cut -d: -f6)}"
 RUNTIME_DIR="/run/user/${TARGET_UID}"
 USER_BUS="unix:path=${RUNTIME_DIR}/bus"
 DISPLAY_VAL="${DISPLAY:-:0}"
@@ -115,10 +118,11 @@ configure_codex_hook() {
 # install_cli - install the kitty-terminal-description CLI into the target
 # user's ~/.local/bin. This is the program's core: every other component (the
 # Claude/Codex hooks, the Agent Command Center tracker) shells out to it. It is
-# installed unconditionally via ensure_core_cli (the component preflight) before
-# any optional component runs, so a user can deselect every customization and the
-# core still works. The __core_cli_installed guard collapses the preflight and
-# any direct call into a single install per run.
+# installed unconditionally by main() via ensure_core_cli — before component
+# selection runs and independently of it — so a user can deselect every
+# customization (or run with an empty selection) and the core still works. The
+# __core_cli_installed guard collapses that call and any direct call into a
+# single install per run.
 __core_cli_installed=0
 install_cli() {
   if [ "$__core_cli_installed" = "1" ]; then
@@ -132,9 +136,11 @@ install_cli() {
   msg "Installed kitty-terminal-description CLI at $bin_dir/kitty-terminal-description"
 }
 
-# ensure_core_cli - component preflight that guarantees the core CLI is present
-# regardless of which optional components were selected, so the hook components
-# never wire to a missing kitty-terminal-description command.
+# ensure_core_cli - guarantee the core CLI is present regardless of which
+# optional components were selected (including none at all), so the hook
+# components never wire to a missing kitty-terminal-description command. Called
+# by main() before component_main; also exported as ISC_PREFLIGHT so the shared
+# runtime re-asserts the core in front of the first selected component.
 ensure_core_cli() {
   install_cli
 }
@@ -257,15 +263,19 @@ isc_load_helpers
 isc_activate_components
 source "$SCRIPT_DIR/installer/components.sh"
 
-# Always install the core CLI before any selected component runs. The shared
-# runtime invokes ISC_PREFLIGHT once, just before the first component, so the
-# core is guaranteed whenever the user installs anything at all.
+# Re-assert the core CLI in front of the first selected component. The shared
+# runtime invokes ISC_PREFLIGHT once, just before that component; main() has
+# already installed the core, so this is a guarded no-op that only matters for
+# callers that drive component_main directly.
 ISC_PREFLIGHT="ensure_core_cli"
 
 # main - run the full install, delegating component selection/execution to the
-# shared component_main runtime. Args: forwarded component flags ("$@").
+# shared component_main runtime. The core CLI is installed first and
+# unconditionally, so a blank selection ("--select ''") still yields a working
+# program. Args: forwarded component flags ("$@").
 main() {
   msg "Installing Linux Kitty Terminal Description for $TARGET_USER"
+  ensure_core_cli
   component_main "$@"
   msg "Linux Kitty Terminal Description installed. Ensure ~/.local/bin is on PATH."
 }
