@@ -1,10 +1,11 @@
 # Clean Installation Compatibility
 
-This repository is part of the `installation_scripts` Linux setup chain. Keep
-the standalone, sudo-free `install.sh` idempotent and compatible with a clean
-checkout. Every runtime dependency, wrapper, hook, and default the feature needs
-must be represented in the installer, and the tool must still function when the
-OpenRouter key or network is unavailable by falling back to the raw prompt.
+The `linux-configuration` skill owns the clean-install and root-optional
+installer rules; they are not restated here. Repository-specific installer
+facts:
+
+The tool must still function when the OpenRouter key or network is
+unavailable, by falling back to the raw prompt.
 
 # Ownership: OpenRouter prompt and commit generation is single-sourced here
 
