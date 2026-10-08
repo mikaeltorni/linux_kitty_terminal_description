@@ -24,6 +24,33 @@ DISPLAY_VAL="${DISPLAY:-:0}"
 # installer_helpers.sh, loaded via isc_load_helpers below before main() runs any
 # component. No vendored copy here.
 
+# Build the Rust CLI when cargo is available. A PATH that hides cargo keeps
+# the Python launcher so clean-home tests still install a working command.
+# The build stays outside run_as_target so HOME does not hide rustup.
+kitty_build_cli() {
+  command -v cargo >/dev/null 2>&1 || return 1
+  local cargo_bin cargo_home rustup_home
+  cargo_bin="$(command -v cargo)"
+  cargo_home="$(cd "$(dirname "$cargo_bin")/.." && pwd)"
+  rustup_home="$(dirname "$cargo_home")/.rustup"
+  env CARGO_HOME="${CARGO_HOME:-$cargo_home}" RUSTUP_HOME="${RUSTUP_HOME:-$rustup_home}" \
+    cargo build --manifest-path "$SCRIPT_DIR/Cargo.toml" --locked --release
+}
+
+kitty_setup_bin() {
+  local built="$SCRIPT_DIR/target/release/kitty-terminal-description"
+  if [ "${KITTY_RUST_BUILT:-}" = 1 ] && [ -x "$built" ]; then
+    printf '%s\n' "$built"
+    return 0
+  fi
+  if command -v cargo >/dev/null 2>&1 && kitty_build_cli && [ -x "$built" ]; then
+    KITTY_RUST_BUILT=1
+    printf '%s\n' "$built"
+    return 0
+  fi
+  return 1
+}
+
 # install_env_file - copy only OPENROUTER_API_KEY from the source env into the
 # user's config dir (mode 0600), securely prompt for one when interactive, or
 # create an empty placeholder when unattended. The source
@@ -38,7 +65,11 @@ install_env_file() {
 
   run_as_target mkdir -p "$config_dir"
   if [ -f "$source_env" ] && grep -Eq '^[[:space:]]*(export[[:space:]]+)?OPENROUTER_API_KEY=' "$source_env"; then
-    run_as_target python3 "$SCRIPT_DIR/scripts/openrouter_env.py" copy-key "$source_env" "$target_env"
+    if setup="$(kitty_setup_bin)"; then
+      run_as_target "$setup" env-copy-key "$source_env" "$target_env"
+    else
+      run_as_target python3 "$SCRIPT_DIR/scripts/openrouter_env.py" copy-key "$source_env" "$target_env"
+    fi
     msg "Installed OpenRouter key at $target_env"
   elif [ -f "$target_env" ] && grep -Eq '^[[:space:]]*(export[[:space:]]+)?OPENROUTER_API_KEY=.+$' "$target_env"; then
     msg "OpenRouter key is already configured at $target_env; leaving it unchanged"
@@ -48,7 +79,11 @@ install_env_file() {
     read -r -s -p "OpenRouter API key (leave blank to configure later): " openrouter_key
     printf '\n' >&2
     if [ -n "$openrouter_key" ]; then
-      printf '%s' "$openrouter_key" | run_as_target python3 "$SCRIPT_DIR/scripts/openrouter_env.py" set-key "$target_env"
+      if setup="$(kitty_setup_bin)"; then
+        printf '%s' "$openrouter_key" | run_as_target "$setup" env-set-key "$target_env"
+      else
+        printf '%s' "$openrouter_key" | run_as_target python3 "$SCRIPT_DIR/scripts/openrouter_env.py" set-key "$target_env"
+      fi
       msg "Installed OpenRouter key at $target_env"
       unset openrouter_key
       return 0
@@ -97,7 +132,11 @@ configure_claude_hook() {
   fi
 
   run_as_target mkdir -p "$claude_dir"
-  run_as_target python3 "$SCRIPT_DIR/scripts/claude_hook_config.py" "$settings_file" "$hook_command"
+  if setup="$(kitty_setup_bin)"; then
+    run_as_target "$setup" hook-config "$settings_file" "$hook_command"
+  else
+    run_as_target python3 "$SCRIPT_DIR/scripts/claude_hook_config.py" "$settings_file" "$hook_command"
+  fi
   msg "Configured Claude UserPromptSubmit hook"
 }
 
@@ -130,7 +169,12 @@ install_cli() {
   fi
   local bin_dir="$TARGET_HOME/.local/bin"
   run_as_target mkdir -p "$bin_dir"
-  run_as_target install -D -m 0755 "$SCRIPT_DIR/scripts/kitty_terminal_description.py" "$bin_dir/kitty-terminal-description"
+  if kitty_build_cli; then
+    KITTY_RUST_BUILT=1
+    run_as_target install -D -m 0755 "$SCRIPT_DIR/target/release/kitty-terminal-description" "$bin_dir/kitty-terminal-description"
+  else
+    run_as_target install -D -m 0755 "$SCRIPT_DIR/scripts/kitty_terminal_description.py" "$bin_dir/kitty-terminal-description"
+  fi
   run_as_target install -D -m 0644 "$SCRIPT_DIR/scripts/logging_utils.py" "$bin_dir/logging_utils.py"
   __core_cli_installed=1
   msg "Installed kitty-terminal-description CLI at $bin_dir/kitty-terminal-description"
@@ -217,7 +261,10 @@ uninstall_claude_hook() {
   local f="$TARGET_HOME/.claude/settings.json"
   [ -f "$f" ] || return 0
   msg "Removing Claude UserPromptSubmit kitty-title hook from $f"
-  run_as_target python3 - "$f" <<'PY'
+  if setup="$(kitty_setup_bin)"; then
+    run_as_target "$setup" hook-remove "$f"
+  else
+    run_as_target python3 - "$f" <<'PY'
 import json, sys
 path = sys.argv[1]
 try:
@@ -244,6 +291,7 @@ if isinstance(ups, list):
         json.dump(data, fh, indent=2)
         fh.write("\n")
 PY
+  fi
 }
 
 # Component selection runtime and this repository's component manifest.
