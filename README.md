@@ -58,6 +58,14 @@ that tracker path.
 
 ## Usage
 
+The installed `kitty-terminal-description` command is a Rust binary when cargo
+is available. It accepts `describe`, `title`, `completion-message`,
+`commit-message`, `generate-json`, `claude-hook`, `clean-label`,
+`env-copy-key`, `env-set-key`, `hook-config`, and `hook-remove`. Without an
+OpenRouter key, `describe` prints the raw prompt title and does not call the
+network. The installer uses `env-copy-key`, `env-set-key`, and `hook-config`
+to write the key file and the Claude hook.
+
 ```bash
 kitty-terminal-description describe --prompt "fix the flaky test" --project-path "$PWD"
 kitty-terminal-description title --prompt "fix the flaky test" --project-path "$PWD"

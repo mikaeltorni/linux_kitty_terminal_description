@@ -1,0 +1,13 @@
+[package]
+name = "kitty-terminal-description"
+version = "0.1.0"
+edition = "2021"
+description = "Kitty prompt titles and OpenRouter summaries"
+
+[[bin]]
+name = "kitty-terminal-description"
+path = "src/main.rs"
+
+[dependencies]
+regex = "1"
+serde_json = { version = "1", features = ["preserve_order"] }
