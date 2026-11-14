@@ -5,7 +5,7 @@ mod summary;
 mod title;
 
 use std::env;
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 use std::path::Path;
 use std::process::ExitCode;
 
@@ -154,9 +154,4 @@ fn required(args: &[String], name: &str) -> Result<String, String> {
 
 fn has_flag(args: &[String], name: &str) -> bool {
     args.iter().any(|arg| arg == name)
-}
-
-#[allow(dead_code)]
-fn _flush() {
-    let _ = io::stdout().flush();
 }
