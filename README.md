@@ -66,6 +66,13 @@ OpenRouter key, `describe` prints the raw prompt title and does not call the
 network. The installer uses `env-copy-key`, `env-set-key`, and `hook-config`
 to write the key file and the Claude hook.
 
+For title summaries, OpenRouter tries `google/gemini-2.5-flash-lite` first and
+can route the same request to `openai/gpt-4.1-nano` if the primary model is
+rate limited or unavailable. Set `OPENROUTER_SUMMARY_MODEL` to a different model
+ID to use that model alone. If title generation fails, the standalone command
+returns a raw-prompt title and ACC uses its neutral `Task` placeholder. Use
+`describe --json` to read the generation status alongside the title and label.
+
 ```bash
 kitty-terminal-description describe --prompt "fix the flaky test" --project-path "$PWD"
 kitty-terminal-description title --prompt "fix the flaky test" --project-path "$PWD"
@@ -141,8 +148,8 @@ Runtime behaviour is further tunable through environment variables read by the
 CLI: `OPENROUTER_SUMMARY_MODEL`, `OPENROUTER_SUMMARY_TIMEOUT`,
 `OPENROUTER_SUMMARY_CACHE_TTL`, `OPENROUTER_SUMMARY_CACHE_DIR`, and
 `OPENROUTER_ENV_FILE`. `OPENROUTER_GENERATE_TIMEOUT` controls generic long-form
-requests. `OPENROUTER_COMMIT_MODEL` optionally overrides the Qwen
-model for commit subjects without changing title summaries.
+requests. `OPENROUTER_COMMIT_MODEL` optionally selects the model used for
+commit subjects.
 
 
 ## Detect, reconfigure, and uninstall
