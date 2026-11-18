@@ -346,3 +346,40 @@ def test_summary_cache_dir_honors_override(tmp_path, monkeypatch):
     target = tmp_path / "explicit-cache"
     monkeypatch.setenv("OPENROUTER_SUMMARY_CACHE_DIR", str(target))
     assert summ.summary_cache_dir() == target
+
+
+def test_describe_json_routes_around_the_logged_primary_model_throttle(monkeypatch, capsys):
+    """Replay the logged upstream throttle through the Python CLI.
+    Parameters: monkeypatch - isolated transport and credentials; capsys - CLI output capture.
+    Returns: None.
+    """
+    print(f"monkeypatch={monkeypatch} capsys={capsys}", file=summ.sys.stderr)
+    prompt = (ROOT / "tests" / "title_rate_limit_prompt.txt").read_text().strip()
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.delenv("OPENROUTER_SUMMARY_MODEL", raising=False)
+    monkeypatch.delenv("CODEX_AGENT_PROJECT_PATH", raising=False)
+    monkeypatch.setattr(summ, "store_project_feature_label", lambda *_args: None)
+
+    def respond(req, timeout=None):
+        """Simulate OpenRouter rate-limiting the primary and trying the next model.
+        Parameters: req - HTTP request; timeout - optional wait limit.
+        Returns: the mock response when fallback routing is enabled.
+        """
+        print(f"req={req} timeout={timeout}", file=summ.sys.stderr)
+        payload = json.loads(req.data)
+        assert payload["messages"][-1]["content"] == prompt
+        if payload.get("models") != ["google/gemini-2.5-flash-lite", "openai/gpt-4.1-nano"]:
+            raise _http_error(429, "google/gemini-2.5-flash-lite is temporarily rate-limited upstream.")
+        result = _fake_urlopen_returning(
+            {"model": "openai/gpt-4.1-nano", "choices": [{"message": {"content": "Logo background placement"}}]}
+        )(req, timeout=timeout)
+        print(result, file=summ.sys.stderr)
+        return result
+
+    monkeypatch.setattr(summ.request, "urlopen", respond)
+    assert summ.main(["describe", "--json", "--prompt", prompt, "--project-path", "/work/demo"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "ok", result
+    assert result["label"] == "Logo background placement"
+    assert result["title"] == "Logo background placement · Demo"
+    print(None, file=summ.sys.stderr)

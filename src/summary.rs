@@ -7,6 +7,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+const DEFAULT_SUMMARY_MODEL: &str = "google/gemini-2.5-flash-lite";
+const TITLE_FALLBACK_MODEL: &str = "openai/gpt-4.1-nano";
+
 pub struct Described {
     pub status: String,
     pub label: String,
@@ -34,16 +37,23 @@ pub fn describe_prompt(prompt: &str, project_path: &str) -> Described {
     Described { status: generated.status, label: String::new(), title: fallback, detail: generated.detail }
 }
 
+#[derive(Debug)]
 pub struct Generated {
     pub status: String,
     pub label: String,
     pub detail: String,
 }
 
+/// Generate and validate a conventional commit subject.
+/// Parameters: diff - Git diff; project_path - repository path.
+/// Returns: generated subject or failure.
 pub fn commit_subject(diff: &str, project_path: &str) -> Generated {
+    eprintln!("diff={diff} project_path={project_path}");
     let cleaned = diff.trim();
     if cleaned.is_empty() {
-        return Generated { status: "skipped".into(), label: String::new(), detail: "empty diff".into() };
+        let result = Generated { status: "skipped".into(), label: String::new(), detail: "empty diff".into() };
+        eprintln!("{result:?}");
+        return result;
     }
     let model = env::var("OPENROUTER_COMMIT_MODEL").unwrap_or_default();
     let model = if model.trim().is_empty() { summary_model() } else { model.trim().to_string() };
@@ -52,54 +62,93 @@ pub fn commit_subject(diff: &str, project_path: &str) -> Generated {
     let generated = request_chat(
         "You write one Conventional Commits subject for the supplied Git diff. Output exactly one line using type(scope): imperative summary. Allowed types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert. Use a short lowercase scope when useful. Do not add markdown, a body, quotes, reasoning, or a trailing period. Keep it at most 100 characters.",
         &format!("Repository: {project}\n\nGit diff:\n{clipped}"),
-        &model,
+        &[&model],
         80,
         0.1,
     );
     if generated.status != "ok" {
-        return generated;
+        let result = generated;
+        eprintln!("{result:?}");
+        return result;
     }
     let subject = clean_commit_subject(&generated.label);
     if subject.is_empty() {
-        return Generated { status: "error".into(), label: String::new(), detail: "invalid conventional commit subject".into() };
+        let result = Generated { status: "error".into(), label: String::new(), detail: "invalid conventional commit subject".into() };
+        eprintln!("{result:?}");
+        return result;
     }
-    Generated { status: "ok".into(), label: subject, detail: String::new() }
+    let result = Generated { status: "ok".into(), label: subject, detail: String::new() };
+    eprintln!("{result:?}");
+    result
 }
 
+/// Generate text with one model.
+/// Parameters: system_prompt - instructions; user_prompt - input text; max_tokens - output limit.
+/// Returns: model content or failure.
 pub fn generate_text(system_prompt: &str, user_prompt: &str, max_tokens: i64) -> Generated {
+    eprintln!("system_prompt={system_prompt} user_prompt={user_prompt} max_tokens={max_tokens}");
     let system = system_prompt.trim();
     let user = user_prompt.trim();
     if system.is_empty() || user.is_empty() {
-        return Generated { status: "skipped".into(), label: String::new(), detail: "empty prompt".into() };
+        let result = Generated { status: "skipped".into(), label: String::new(), detail: "empty prompt".into() };
+        eprintln!("{result:?}");
+        return result;
     }
     if max_tokens <= 0 {
-        return Generated { status: "error".into(), label: String::new(), detail: "max_tokens must be positive".into() };
+        let result = Generated { status: "error".into(), label: String::new(), detail: "max_tokens must be positive".into() };
+        eprintln!("{result:?}");
+        return result;
     }
-    request_chat(system, user, &summary_model(), max_tokens, 0.0)
+    let result = request_chat(system, user, &[&summary_model()], max_tokens, 0.0);
+    eprintln!("{result:?}");
+    result
 }
 
+/// Resolve the configured summary model.
+/// Parameters: none.
+/// Returns: configured model or the default.
 fn summary_model() -> String {
+    eprintln!("parameters=none");
     let model = env::var("OPENROUTER_SUMMARY_MODEL").unwrap_or_default();
-    if model.trim().is_empty() { "google/gemini-2.5-flash-lite".into() } else { model.trim().to_string() }
+    let result = if model.trim().is_empty() { DEFAULT_SUMMARY_MODEL.into() } else { model.trim().to_string() };
+    eprintln!("{result:?}");
+    result
 }
 
+/// Request a title using the default model and its backup, or the configured model.
+/// Parameters: prompt - normalized task text.
+/// Returns: the generated label or provider failure.
 fn request_summary(prompt: &str) -> Generated {
-    request_chat(
+    eprintln!("prompt={prompt}");
+    let model = summary_model();
+    let models = if model == DEFAULT_SUMMARY_MODEL {
+        vec![model.as_str(), TITLE_FALLBACK_MODEL]
+    } else {
+        vec![model.as_str()]
+    };
+    let result = request_chat(
         "You compress a software task description into a short feature label of two to five words. Output only the label in plain words. No punctuation, no quotes, no trailing period.",
         prompt,
-        &summary_model(),
+        &models,
         40,
         0.1,
-    )
+    );
+    eprintln!("{result:?}");
+    result
 }
 
-fn request_chat(system_prompt: &str, user_prompt: &str, model: &str, max_tokens: i64, temperature: f64) -> Generated {
+/// Submit a chat request using the supplied routing order.
+/// Parameters: system_prompt - model instructions; user_prompt - input text; models - nonempty ordered model IDs; max_tokens - output limit; temperature - sampling temperature.
+/// Returns: response content or a structured failure.
+fn request_chat(system_prompt: &str, user_prompt: &str, models: &[&str], max_tokens: i64, temperature: f64) -> Generated {
+    eprintln!("system_prompt={system_prompt} user_prompt={user_prompt} models={models:?} max_tokens={max_tokens} temperature={temperature}");
     let key = api_key();
     if key.is_empty() {
-        return Generated { status: "no_key".into(), label: String::new(), detail: "no OPENROUTER_API_KEY".into() };
+        let result = Generated { status: "no_key".into(), label: String::new(), detail: "no OPENROUTER_API_KEY".into() };
+        eprintln!("{result:?}");
+        return result;
     }
-    let body = serde_json::json!({
-        "model": model,
+    let mut body = serde_json::json!({
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
@@ -107,25 +156,41 @@ fn request_chat(system_prompt: &str, user_prompt: &str, model: &str, max_tokens:
         "max_tokens": max_tokens,
         "temperature": temperature,
         "reasoning": {"enabled": false}
-    }).to_string();
+    });
+    if let [model] = models {
+        body["model"] = serde_json::json!(model);
+    } else {
+        body["models"] = serde_json::json!(models);
+    }
+    let body = body.to_string();
     let mut child = Command::new("curl");
     child.args(["-sS", "-m", "8", "-X", "POST", "https://openrouter.ai/api/v1/chat/completions", "-H", &format!("Authorization: Bearer {key}"), "-H", "Content-Type: application/json", "-H", "HTTP-Referer: https://github.com/mikaeltorni/linux_kitty_terminal_description", "-H", "X-Title: Linux Kitty Terminal Description", "--data-binary", &body, "-w", "\n%{http_code}"]);
     let Ok(output) = child.output() else {
-        return Generated { status: "error".into(), label: String::new(), detail: "request failed: curl".into() };
+        let result = Generated { status: "error".into(), label: String::new(), detail: "request failed: curl".into() };
+        eprintln!("{result:?}");
+        return result;
     };
     let text = String::from_utf8_lossy(&output.stdout).to_string();
     let (payload, code) = text.rsplit_once('\n').unwrap_or((text.as_str(), ""));
     if code != "200" {
-        return Generated { status: "error".into(), label: String::new(), detail: format!("HTTP {code}: {}", &payload.chars().take(200).collect::<String>()) };
+        let result = Generated { status: "error".into(), label: String::new(), detail: format!("HTTP {code}: {}", &payload.chars().take(200).collect::<String>()) };
+        eprintln!("{result:?}");
+        return result;
     }
     let Ok(parsed) = serde_json::from_str::<serde_json::Value>(payload) else {
-        return Generated { status: "error".into(), label: String::new(), detail: "bad response".into() };
+        let result = Generated { status: "error".into(), label: String::new(), detail: "bad response".into() };
+        eprintln!("{result:?}");
+        return result;
     };
     let content = parsed.pointer("/choices/0/message/content").and_then(|value| value.as_str()).unwrap_or("").to_string();
     if content.trim().is_empty() {
-        return Generated { status: "error".into(), label: String::new(), detail: "empty response".into() };
+        let result = Generated { status: "error".into(), label: String::new(), detail: "empty response".into() };
+        eprintln!("{result:?}");
+        return result;
     }
-    Generated { status: "ok".into(), label: content, detail: String::new() }
+    let result = Generated { status: "ok".into(), label: content, detail: String::new() };
+    eprintln!("{result:?}");
+    result
 }
 
 fn clean_commit_subject(text: &str) -> String {

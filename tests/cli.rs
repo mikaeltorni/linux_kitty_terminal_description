@@ -64,3 +64,67 @@ fn copy_key_and_hook_config_match_python_files() {
     assert_eq!(fs::read_to_string(&settings).unwrap(), golden);
     let _ = fs::remove_dir_all(dir);
 }
+
+/// Replay the logged throttle through the public JSON title command.
+/// Parameters: none.
+/// Returns: None.
+#[test]
+fn describe_routes_around_the_logged_primary_model_throttle() {
+    eprintln!("parameters=none");
+    let dir = std::env::temp_dir().join(format!("kitty-title-throttle-{}", std::process::id()));
+    fs::create_dir_all(&dir).unwrap();
+    let curl = dir.join("curl");
+    // Simulate OpenRouter routing the same request to a healthy fallback.
+    fs::write(&curl, r#"#!/bin/sh
+while [ "$#" -gt 1 ] && [ "$1" != "--data-binary" ]; do shift; done
+case "$2" in
+    *'"model":"openai/gpt-4.1-nano"'*)
+        printf '%s\n200' '{"choices":[{"message":{"content":"Pinned title model"}}]}'
+        ;;
+    *'lets add the logo to each of the bars'*'"models":["google/gemini-2.5-flash-lite","openai/gpt-4.1-nano"]'*)
+        printf '%s\n200' '{"model":"openai/gpt-4.1-nano","choices":[{"message":{"content":"Logo background placement"}}]}'
+        ;;
+    *)
+        printf '%s\n429' '{"error":{"message":"Provider returned error","code":429,"metadata":{"raw":"google/gemini-2.5-flash-lite is temporarily rate-limited upstream."}}}'
+        ;;
+esac
+"#).unwrap();
+    fs::set_permissions(&curl, fs::Permissions::from_mode(0o700)).unwrap();
+    let mut paths = vec![dir.clone()];
+    paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()));
+    for (model, prompt, status, label, title) in [
+        (
+            None, include_str!("title_rate_limit_prompt.txt").trim(), "ok",
+            "Logo background placement", "Logo background placement · Demo",
+        ),
+        (
+            Some("openai/gpt-4.1-nano"), "Fix the queue race", "ok",
+            "Pinned title model", "Pinned title model · Demo",
+        ),
+        (
+            None, "Fix the queue race", "error",
+            "", "Fix the queue race · Demo",
+        ),
+    ] {
+        let mut command = Command::new(bin());
+        isolated(&mut command);
+        if let Some(model) = model {
+            command.env("OPENROUTER_SUMMARY_MODEL", model);
+        } else {
+            command.env_remove("OPENROUTER_SUMMARY_MODEL");
+        }
+        let output = command
+            .env("PATH", std::env::join_paths(&paths).unwrap())
+            .env("OPENROUTER_API_KEY", "test-key")
+            .args(["describe", "--json", "--prompt", prompt, "--project-path", "/work/demo"])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{:?}", output);
+        let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(result["status"], status, "{result}");
+        assert_eq!(result["label"], label);
+        assert_eq!(result["title"], title);
+    }
+    fs::remove_dir_all(dir).unwrap();
+    eprintln!("None");
+}

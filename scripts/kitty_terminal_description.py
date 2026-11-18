@@ -40,6 +40,7 @@ from logging_utils import get_logger
 # Cheap OpenRouter model for titles/commits. qwen/qwen3.7-flash was the prior
 # default but hits free-tier upstream 429s; override with OPENROUTER_SUMMARY_MODEL.
 DEFAULT_SUMMARY_MODEL = "google/gemini-2.5-flash-lite"
+TITLE_FALLBACK_MODEL = "openai/gpt-4.1-nano"
 DEFAULT_SUMMARY_CACHE_TTL_SECONDS = 6 * 60 * 60
 FEATURE_LABEL_TTL_SECONDS = 2 * 60 * 60
 OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
@@ -382,26 +383,23 @@ def _request_openrouter_content(
     event: str,
     temperature: float = 0.1,
     timeout: float | None = None,
+    fallback_model: str | None = None,
 ) -> SummaryResult:
     """Request one non-reasoning OpenRouter completion through shared plumbing.
 
-    Args:
-        messages: Ordered chat-completion messages.
-        model: Exact OpenRouter model id.
-        key: Optional API-key override; normal env-file lookup is used otherwise.
-        max_tokens: Maximum generated tokens.
-        event: Non-sensitive operation label used in diagnostics.
-        temperature: Sampling temperature sent to OpenRouter.
-        timeout: Optional request timeout; summary timeout is the default.
-
-    Returns:
-        SummaryResult: Raw model content in ``label`` on success and a
-        classified, non-raising status on every boundary failure.
+    Parameters: messages - ordered chat messages; model - primary model ID;
+        key - optional credential override; max_tokens - output limit; event - operation label;
+        temperature - sampling temperature; timeout - wait limit; fallback_model - optional backup model ID.
+    Returns: model content or a classified failure.
     """
+    print(f"messages={messages} model={model} key={'<redacted>' if key else key} max_tokens={max_tokens} "
+          f"event={event} temperature={temperature} timeout={timeout} fallback_model={fallback_model}", file=sys.stderr)
     resolved_key = (key or "").strip() or api_key()
     if not resolved_key:
         logger.warning("%s missing OPENROUTER_API_KEY", event)
-        return SummaryResult(STATUS_NO_KEY, "", "no OPENROUTER_API_KEY")
+        result = SummaryResult(STATUS_NO_KEY, "", "no OPENROUTER_API_KEY")
+        print(result, file=sys.stderr)
+        return result
     payload = {
         "model": model,
         "messages": messages,
@@ -409,6 +407,9 @@ def _request_openrouter_content(
         "temperature": float(temperature),
         "reasoning": {"enabled": False},
     }
+    if fallback_model:
+        del payload["model"]
+        payload["models"] = [model, fallback_model]
     data = json.dumps(payload).encode("utf-8")
     req = request.Request(OPENROUTER_ENDPOINT, data=data, method="POST")
     req.add_header("Authorization", f"Bearer {resolved_key}")
@@ -426,20 +427,30 @@ def _request_openrouter_content(
             err_body = ""
         status = _classify_http_error(exc.code, err_body)
         logger.warning("%s http error code=%s status=%s", event, exc.code, status)
-        return SummaryResult(status, "", f"HTTP {exc.code}: {err_body[:200]}")
+        result = SummaryResult(status, "", f"HTTP {exc.code}: {err_body[:200]}")
+        print(result, file=sys.stderr)
+        return result
     except (error.URLError, TimeoutError, OSError) as exc:
         logger.warning("%s request failed error=%s", event, exc)
-        return SummaryResult(STATUS_ERROR, "", f"request failed: {exc}")
+        result = SummaryResult(STATUS_ERROR, "", f"request failed: {exc}")
+        print(result, file=sys.stderr)
+        return result
     try:
         parsed = json.loads(body)
         content = parsed["choices"][0]["message"]["content"]
     except (ValueError, KeyError, IndexError, TypeError) as exc:
         logger.warning("%s bad response error=%s", event, exc)
-        return SummaryResult(STATUS_ERROR, "", f"bad response: {exc}")
+        result = SummaryResult(STATUS_ERROR, "", f"bad response: {exc}")
+        print(result, file=sys.stderr)
+        return result
     if not isinstance(content, str) or not content.strip():
         logger.warning("%s produced empty content model=%s", event, model)
-        return SummaryResult(STATUS_ERROR, "", "empty response")
-    return SummaryResult(STATUS_OK, content, "")
+        result = SummaryResult(STATUS_ERROR, "", "empty response")
+        print(result, file=sys.stderr)
+        return result
+    result = SummaryResult(STATUS_OK, content, "")
+    print(result, file=sys.stderr)
+    return result
 
 
 def generate_text(
@@ -492,24 +503,23 @@ def summarize_prompt(prompt: str, *, model: str | None = None, key: str | None =
     completions endpoint and caches a successful result. All network and
     parsing failures are reported as structured statuses rather than raised.
 
-    Args:
-        prompt (str): Free-form task description to summarize.
-        model (str | None): Override model id; defaults to :func:`summary_model`.
-        key (str | None): Override API key; defaults to :func:`api_key`.
-
-    Returns:
-        SummaryResult: ``status`` is one of the ``STATUS_*`` constants, with the
-        feature ``label`` populated on success and ``detail`` carrying context.
+    Parameters: prompt - task description; model - optional model override; key - optional credential override.
+    Returns: cleaned AI label or a classified failure.
     """
+    print(f"prompt={prompt} model={model} key={'<redacted>' if key else key}", file=sys.stderr)
     cleaned_prompt = " ".join((prompt or "").split())
     if not cleaned_prompt:
         logger.debug("summarize_prompt skipped empty prompt")
-        return SummaryResult(STATUS_SKIPPED, "", "empty prompt")
+        result = SummaryResult(STATUS_SKIPPED, "", "empty prompt")
+        print(result, file=sys.stderr)
+        return result
     resolved_model = model or summary_model()
     cached_label = read_cached_label(resolved_model, cleaned_prompt)
     if cached_label:
         logger.info("summarize_prompt cache hit model=%s", resolved_model)
-        return SummaryResult(STATUS_OK, cached_label, "cache")
+        result = SummaryResult(STATUS_OK, cached_label, "cache")
+        print(result, file=sys.stderr)
+        return result
     generated = _request_openrouter_content(
         [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -519,16 +529,22 @@ def summarize_prompt(prompt: str, *, model: str | None = None, key: str | None =
         key=key,
         max_tokens=40,
         event="summarize_prompt",
+        fallback_model=TITLE_FALLBACK_MODEL if model is None and resolved_model == DEFAULT_SUMMARY_MODEL else None,
     )
     if generated.status != STATUS_OK:
+        print(generated, file=sys.stderr)
         return generated
     label = clean_label(generated.label)
     if not label:
         logger.warning("summarize_prompt produced empty label model=%s", resolved_model)
-        return SummaryResult(STATUS_ERROR, "", "empty label")
+        result = SummaryResult(STATUS_ERROR, "", "empty label")
+        print(result, file=sys.stderr)
+        return result
     write_cached_label(resolved_model, cleaned_prompt, label)
     logger.info("summarize_prompt ok model=%s", resolved_model)
-    return SummaryResult(STATUS_OK, label, "")
+    result = SummaryResult(STATUS_OK, label, "")
+    print(result, file=sys.stderr)
+    return result
 
 
 def clean_commit_subject(text: str) -> str:
